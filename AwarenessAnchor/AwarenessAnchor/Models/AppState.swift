@@ -20,6 +20,9 @@ class AppState: ObservableObject {
     private let dataStore: DataStore
     let headPoseDetector: HeadPoseDetector  // Public for debug UI access
 
+    // MARK: - Callbacks
+    var onResponseRecorded: ((ResponseType) -> Void)?
+
     // MARK: - Private State
     private var cancellables = Set<AnyCancellable>()
     private var responseWindowTimer: Timer?
@@ -188,17 +191,26 @@ class AppState: ObservableObject {
         isInResponseWindow = false
         responseWindowRemainingSeconds = 0
 
+        // Check if user was present (face detected) before deactivating
+        let headPoseEnabled = UserDefaults.standard.bool(forKey: "headPoseEnabled")
+        let userWasPresent = !headPoseEnabled || headPoseDetector.faceWasDetectedThisWindow
+
         headPoseDetector.deactivateWindow()
 
-        // If no response, record as missed
+        // If no response, record as missed - but only if user was actually present
+        // (if head pose is enabled and no face detected, user was away from device)
         if !responded, let sessionId = currentSession?.id {
-            let event = ChimeEvent(
-                responseType: .missed,
-                responseTimeMs: nil,
-                sessionId: sessionId
-            )
-            dataStore.saveChimeEvent(event)
-            updateTodayStats(with: .missed)
+            if userWasPresent {
+                let event = ChimeEvent(
+                    responseType: .missed,
+                    responseTimeMs: nil,
+                    sessionId: sessionId
+                )
+                dataStore.saveChimeEvent(event)
+                updateTodayStats(with: .missed)
+            } else {
+                print("[AppState] No face detected during window - skipping missed event (user away)")
+            }
         }
 
         pendingChimeId = nil
@@ -234,7 +246,7 @@ class AppState: ObservableObject {
     }
 
     private func provideFeedback(for type: ResponseType) {
-        // Could add haptic feedback or subtle audio confirmation
-        // For now, the UI update provides visual feedback
+        // Notify listeners (AppDelegate handles visual feedback)
+        onResponseRecorded?(type)
     }
 }

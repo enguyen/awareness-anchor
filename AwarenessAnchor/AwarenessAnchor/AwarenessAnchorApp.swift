@@ -19,6 +19,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var popover: NSPopover!
     let appState = AppState.shared
     private var eventMonitor: Any?
+    private var iconResetTimer: Timer?
+    private var feedbackWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -43,6 +45,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Set up global hotkey monitoring
         setupHotkeyMonitor()
+
+        // Set up response feedback callback
+        setupResponseFeedback()
 
         // Hide dock icon (menu bar only app)
         NSApp.setActivationPolicy(.accessory)
@@ -75,6 +80,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func setupResponseFeedback() {
+        // Subscribe to response events for visual feedback
+        appState.onResponseRecorded = { [weak self] responseType in
+            self?.showResponseFeedback(responseType)
+        }
+    }
+
     private func handleGlobalKeyEvent(_ event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
@@ -88,6 +100,95 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - Visual Feedback
+
+    func showResponseFeedback(_ type: ResponseType) {
+        // 1. Change menu bar icon temporarily
+        showIconFeedback(for: type)
+
+        // 2. Show screen edge glow
+        showScreenGlow(for: type)
+    }
+
+    private func showIconFeedback(for type: ResponseType) {
+        let iconName: String
+        switch type {
+        case .present:
+            iconName = "sun.max.fill"
+        case .returned:
+            iconName = "arrow.uturn.backward.circle.fill"
+        case .missed:
+            return // No feedback for missed
+        }
+
+        // Change icon
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
+        }
+
+        // Reset after 3 seconds
+        iconResetTimer?.invalidate()
+        iconResetTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
+            if let button = self?.statusItem.button {
+                button.image = NSImage(systemSymbolName: "bell.fill", accessibilityDescription: "Awareness Anchor")
+            }
+        }
+    }
+
+    private func showScreenGlow(for type: ResponseType) {
+        // Ensure we're on main thread
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.showScreenGlow(for: type)
+            }
+            return
+        }
+
+        // Close any existing feedback window
+        feedbackWindow?.close()
+        feedbackWindow = nil
+
+        let color: NSColor
+        switch type {
+        case .present:
+            color = NSColor.systemGreen
+        case .returned:
+            color = NSColor.systemOrange
+        case .missed:
+            return
+        }
+
+        // Get the main screen
+        guard let screen = NSScreen.main else { return }
+        let screenFrame = screen.frame
+
+        // Create a borderless, transparent window
+        let glowHeight: CGFloat = 6
+        let windowFrame = NSRect(x: screenFrame.minX,
+                                 y: screenFrame.maxY - glowHeight,
+                                 width: screenFrame.width,
+                                 height: glowHeight)
+
+        let window = NSWindow(contentRect: windowFrame,
+                             styleMask: .borderless,
+                             backing: .buffered,
+                             defer: false)
+        window.isOpaque = false
+        window.backgroundColor = color.withAlphaComponent(0.8)
+        window.level = .statusBar
+        window.ignoresMouseEvents = true
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary]
+
+        window.orderFront(nil)
+        feedbackWindow = window
+
+        // Simple fade out after 1.5 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.feedbackWindow?.close()
+            self?.feedbackWindow = nil
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
@@ -95,3 +196,4 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appState.endSession()
     }
 }
+

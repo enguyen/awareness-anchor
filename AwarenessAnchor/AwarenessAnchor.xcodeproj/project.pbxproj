@@ -25,6 +25,9 @@
 		016 /* bright-tibetan-bell-ding.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 118 /* bright-tibetan-bell-ding.mp3 */; };
 		017 /* singing-bell-hit.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 119 /* singing-bell-hit.mp3 */; };
 		018 /* bell-meditation.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 120 /* bell-meditation.mp3 */; };
+		019 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121 /* Logger.swift */; };
+		020 /* HeadPoseCalibrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 122 /* HeadPoseCalibrationView.swift */; };
+		021 /* HeadPoseSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 123 /* HeadPoseSceneView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -49,6 +52,9 @@
 		118 /* bright-tibetan-bell-ding.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "bright-tibetan-bell-ding.mp3"; sourceTree = "<group>"; };
 		119 /* singing-bell-hit.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "singing-bell-hit.mp3"; sourceTree = "<group>"; };
 		120 /* bell-meditation.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "bell-meditation.mp3"; sourceTree = "<group>"; };
+		121 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
+		122 /* HeadPoseCalibrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadPoseCalibrationView.swift; sourceTree = "<group>"; };
+		123 /* HeadPoseSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadPoseSceneView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -99,6 +105,8 @@
 				102 /* MenuBarView.swift */,
 				103 /* SettingsView.swift */,
 				104 /* StatsView.swift */,
+				122 /* HeadPoseCalibrationView.swift */,
+				123 /* HeadPoseSceneView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -121,6 +129,7 @@
 				110 /* HotkeyManager.swift */,
 				111 /* DataStore.swift */,
 				112 /* HeadPoseDetector.swift */,
+				121 /* Logger.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -173,7 +182,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1500;
-				LastUpgradeCheck = 1500;
+				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					400 = {
 						CreatedOnToolsVersion = 15.0;
@@ -231,6 +240,9 @@
 				010 /* HotkeyManager.swift in Sources */,
 				011 /* DataStore.swift in Sources */,
 				012 /* HeadPoseDetector.swift in Sources */,
+				019 /* Logger.swift in Sources */,
+				020 /* HeadPoseCalibrationView.swift in Sources */,
+				021 /* HeadPoseSceneView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -271,6 +283,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -295,6 +308,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -334,6 +348,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -351,6 +366,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
@@ -364,6 +380,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -392,6 +409,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;

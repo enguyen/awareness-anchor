@@ -19,6 +19,13 @@ struct SettingsView: View {
                     Label("Chimes", systemImage: "bell")
                 }
 
+            if headPoseEnabled {
+                HeadPoseCalibrationView(detector: appState.headPoseDetector)
+                    .tabItem {
+                        Label("Calibrate", systemImage: "face.smiling")
+                    }
+            }
+
             HotkeySettingsView()
                 .tabItem {
                     Label("Shortcuts", systemImage: "keyboard")
@@ -29,136 +36,186 @@ struct SettingsView: View {
                     Label("Statistics", systemImage: "chart.bar")
                 }
         }
-        .frame(width: 500, height: 400)
+        .frame(width: 480, height: 620)
         .environmentObject(appState)
     }
 }
+
+// MARK: - Shared Components
+
+struct SettingsSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.headline)
+            .foregroundColor(.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 4)
+    }
+}
+
+struct SettingsSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SettingsSectionHeader(title: title)
+            VStack(alignment: .leading, spacing: 12) {
+                content
+            }
+            .padding(.leading, 8)
+        }
+    }
+}
+
+// MARK: - General Settings
 
 struct GeneralSettingsView: View {
     @Binding var headPoseEnabled: Bool
     @Binding var launchAtLogin: Bool
 
     var body: some View {
-        Form {
-            Section {
-                Toggle("Launch at login", isOn: $launchAtLogin)
-                    .help("Start Awareness Anchor when you log in")
-            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Startup
+                SettingsSection(title: "Startup") {
+                    Toggle("Launch at login", isOn: $launchAtLogin)
+                        .toggleStyle(.switch)
+                }
 
-            Section {
-                Toggle("Enable head pose detection", isOn: $headPoseEnabled)
-                    .help("Use camera to detect head movements as responses")
+                Divider()
 
-                if headPoseEnabled {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Head Gesture Guide")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
+                // Head Pose Detection
+                SettingsSection(title: "Head Pose Detection") {
+                    Toggle("Enable camera-based head tracking", isOn: $headPoseEnabled)
+                        .toggleStyle(.switch)
 
-                        HStack {
-                            Image(systemName: "arrow.up")
-                                .foregroundColor(.green)
-                            Text("Tilt head up")
-                            Spacer()
-                            Text("Already Present")
+                    if headPoseEnabled {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Gestures")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
                                 .foregroundColor(.secondary)
-                        }
-                        .font(.caption)
 
-                        HStack {
-                            Image(systemName: "arrow.left.and.right")
-                                .foregroundColor(.orange)
-                            Text("Turn head left/right")
-                            Spacer()
-                            Text("Returned")
-                                .foregroundColor(.secondary)
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.title2)
+                                VStack(alignment: .leading) {
+                                    Text("Tilt Head Up")
+                                        .fontWeight(.medium)
+                                    Text("Already Present")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                            }
+
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.left.arrow.right.circle.fill")
+                                    .foregroundColor(.orange)
+                                    .font(.title2)
+                                VStack(alignment: .leading) {
+                                    Text("Turn Head")
+                                        .fontWeight(.medium)
+                                    Text("Returned to Awareness")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                            }
                         }
-                        .font(.caption)
+                        .padding(12)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(8)
+
+                        Text("Camera activates only during response windows. If no face is detected, the chime is not counted.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                    .padding()
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(8)
+                }
 
-                    Text("Camera is only active during response windows, not continuously.")
-                        .font(.caption)
+                Divider()
+
+                // Fallback
+                SettingsSection(title: "Keyboard Fallback") {
+                    Text("Shortcuts always work: ⌘⇧1 = Present • ⌘⇧2 = Returned")
+                        .font(.callout)
                         .foregroundColor(.secondary)
                 }
-            } header: {
-                Text("Head Pose Detection")
             }
-
-            Section {
-                Text("Keyboard shortcuts always work as a fallback:\n⌘⇧1 = Present  •  ⌘⇧2 = Returned")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } header: {
-                Text("Fallback Input")
-            }
+            .padding(24)
         }
-        .padding()
     }
 }
+
+// MARK: - Chime Settings
 
 struct ChimeSettingsView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        Form {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Average Interval")
-                        Spacer()
-                        Text(formatInterval(appState.averageIntervalSeconds))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Interval
+                SettingsSection(title: "Chime Interval") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Average time between chimes")
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(formatInterval(appState.averageIntervalSeconds))
+                                .fontWeight(.medium)
+                                .monospacedDigit()
+                        }
+
+                        Slider(value: Binding(
+                            get: { appState.averageIntervalSeconds },
+                            set: { appState.updateInterval(round($0)) }
+                        ), in: 3...300)
+                        .tint(.orange)
+
+                        Text("Actual intervals vary randomly around this average.")
+                            .font(.caption)
                             .foregroundColor(.secondary)
-                            .monospacedDigit()
                     }
+                }
 
-                    Slider(value: Binding(
-                        get: { appState.averageIntervalSeconds },
-                        set: { appState.updateInterval($0) }
-                    ), in: 3...300, step: 1)
+                Divider()
 
-                    Text("Chimes occur at random intervals centered around this average.")
-                        .font(.caption)
+                // Response Window
+                SettingsSection(title: "Response Window") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Time to respond after chime")
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("\(Int(appState.responseWindowSeconds)) seconds")
+                                .fontWeight(.medium)
+                                .monospacedDigit()
+                        }
+
+                        Slider(value: Binding(
+                            get: { appState.responseWindowSeconds },
+                            set: { appState.updateResponseWindow(round($0)) }
+                        ), in: 3...30)
+                        .tint(.orange)
+                    }
+                }
+
+                Divider()
+
+                // Sounds
+                SettingsSection(title: "Sounds") {
+                    Text("Five Tibetan singing bowl sounds are included. A random sound plays for each chime.")
+                        .font(.callout)
                         .foregroundColor(.secondary)
                 }
-            } header: {
-                Text("Timing")
             }
-
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Response Window")
-                        Spacer()
-                        Text("\(Int(appState.responseWindowSeconds))s")
-                            .foregroundColor(.secondary)
-                            .monospacedDigit()
-                    }
-
-                    Slider(value: Binding(
-                        get: { appState.responseWindowSeconds },
-                        set: { appState.updateResponseWindow($0) }
-                    ), in: 3...30, step: 1)
-
-                    Text("Time you have to respond after each chime.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            } header: {
-                Text("Response Window")
-            }
-
-            Section {
-                Text("Sound files are bundled with the app. Custom sounds coming soon.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } header: {
-                Text("Sounds")
-            }
+            .padding(24)
         }
-        .padding()
     }
 
     private func formatInterval(_ seconds: Double) -> String {
@@ -166,56 +223,85 @@ struct ChimeSettingsView: View {
             let minutes = Int(seconds) / 60
             let secs = Int(seconds) % 60
             if secs == 0 {
-                return "\(minutes)m"
+                return "\(minutes) min"
             }
-            return "\(minutes)m \(secs)s"
+            return "\(minutes) min \(secs) sec"
         }
-        return "\(Int(seconds))s"
+        return "\(Int(seconds)) sec"
     }
 }
+
+// MARK: - Hotkey Settings
 
 struct HotkeySettingsView: View {
     @StateObject private var hotkeyManager = HotkeyManager.shared
 
     var body: some View {
-        Form {
-            Section {
-                HStack {
-                    Text("Already Present")
-                    Spacer()
-                    Text(hotkeyManager.presentHotkey.displayName)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.gray.opacity(0.2))
-                        .cornerRadius(6)
-                        .font(.system(.body, design: .monospaced))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                SettingsSection(title: "Global Shortcuts") {
+                    VStack(spacing: 12) {
+                        HotkeyRow(
+                            action: "Already Present",
+                            icon: "sun.max.fill",
+                            iconColor: .green,
+                            shortcut: hotkeyManager.presentHotkey.displayName
+                        )
+
+                        HotkeyRow(
+                            action: "Returned to Awareness",
+                            icon: "arrow.uturn.backward",
+                            iconColor: .orange,
+                            shortcut: hotkeyManager.returnedHotkey.displayName
+                        )
+                    }
+
+                    Text("These shortcuts work globally, even when other apps are focused.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
                 }
 
-                HStack {
-                    Text("Returned to Awareness")
-                    Spacer()
-                    Text(hotkeyManager.returnedHotkey.displayName)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.gray.opacity(0.2))
-                        .cornerRadius(6)
-                        .font(.system(.body, design: .monospaced))
-                }
-            } header: {
-                Text("Keyboard Shortcuts")
-            } footer: {
-                Text("These shortcuts work globally, even when the app is in the background.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+                Divider()
 
-            Section {
-                Text("Custom hotkey configuration coming in a future update.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                SettingsSection(title: "Customization") {
+                    Text("Custom shortcut configuration coming in a future update.")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                }
             }
+            .padding(24)
         }
-        .padding()
+    }
+}
+
+struct HotkeyRow: View {
+    let action: String
+    let icon: String
+    let iconColor: Color
+    let shortcut: String
+
+    var body: some View {
+        HStack {
+            Image(systemName: icon)
+                .foregroundColor(iconColor)
+                .frame(width: 24)
+
+            Text(action)
+
+            Spacer()
+
+            Text(shortcut)
+                .font(.system(.body, design: .monospaced))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+                )
+        }
     }
 }
 

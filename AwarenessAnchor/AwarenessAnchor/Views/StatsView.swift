@@ -8,7 +8,7 @@ struct StatsView: View {
     private let dataStore = DataStore()
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 0) {
             // Period Picker
             Picker("Period", selection: $selectedPeriod) {
                 Text("Today").tag(StatsPeriod.today)
@@ -17,7 +17,7 @@ struct StatsView: View {
                 Text("All Time").tag(StatsPeriod.allTime)
             }
             .pickerStyle(.segmented)
-            .padding(.horizontal)
+            .padding(20)
 
             if stats.totalChimes == 0 {
                 Spacer()
@@ -34,9 +34,9 @@ struct StatsView: View {
                 Spacer()
             } else {
                 ScrollView {
-                    VStack(spacing: 24) {
+                    VStack(spacing: 20) {
                         // Summary Cards
-                        HStack(spacing: 16) {
+                        HStack(spacing: 12) {
                             SummaryCard(
                                 title: "Awareness",
                                 value: "\(Int(stats.awarenessRatio * 100))%",
@@ -58,33 +58,39 @@ struct StatsView: View {
                                 .font(.headline)
 
                             ResponseDistributionChart(stats: stats)
-                                .frame(height: 200)
+                                .frame(height: 160)
                         }
-                        .padding()
-                        .background(Color.gray.opacity(0.1))
-                        .cornerRadius(12)
+                        .padding(16)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(10)
 
                         // Response Time
                         if stats.averageResponseTimeMs > 0 {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Average Response Time")
-                                    .font(.headline)
-
-                                HStack {
-                                    Image(systemName: "timer")
-                                        .foregroundColor(.orange)
-                                    Text("\(stats.averageResponseTimeMs)ms")
-                                        .font(.title2)
-                                        .fontWeight(.semibold)
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Average Response Time")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                        Text("\(stats.averageResponseTimeMs)")
+                                            .font(.title)
+                                            .fontWeight(.semibold)
+                                        Text("ms")
+                                            .font(.subheadline)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
+                                Spacer()
+                                Image(systemName: "timer")
+                                    .font(.title)
+                                    .foregroundColor(.orange)
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
-                            .background(Color.gray.opacity(0.1))
-                            .cornerRadius(12)
+                            .padding(16)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(10)
                         }
                     }
-                    .padding()
+                    .padding(20)
                 }
             }
         }
@@ -109,23 +115,24 @@ struct SummaryCard: View {
     let color: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
 
             Text(value)
-                .font(.system(size: 36, weight: .bold))
+                .font(.system(size: 32, weight: .bold))
                 .foregroundColor(color)
 
             Text(subtitle)
                 .font(.caption)
                 .foregroundColor(.secondary)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
+        .padding(14)
         .background(color.opacity(0.1))
-        .cornerRadius(12)
+        .cornerRadius(10)
     }
 }
 
@@ -147,7 +154,7 @@ struct ResponseDistributionChart: View {
                 y: .value("Count", point.count)
             )
             .foregroundStyle(point.color)
-            .cornerRadius(6)
+            .cornerRadius(4)
         }
         .chartXAxis {
             AxisMarks { _ in
