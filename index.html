@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Awareness Anchor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Custom slider track for dark mode */
+        input[type="range"]::-webkit-slider-runnable-track {
+            background: #404040; /* neutral-700 */
+            height: 8px;
+            border-radius: 4px;
+        }
+        input[type="range"]::-moz-range-track {
+            background: #404040; /* neutral-700 */
+            height: 8px;
+            border-radius: 4px;
+        }
+        /* Custom slider thumb for dark mode with warm accent */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #f59e0b; /* amber-500 */
+            cursor: pointer;
+            border-radius: 50%;
+            margin-top: -6px;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #f59e0b; /* amber-500 */
+            cursor: pointer;
+            border-radius: 50%;
+            border: none;
+        }
+
+        /* Inward Glow Animation on Overlay */
+        #glowOverlay.chime-active {
+            animation: inward-glow 5s ease-out;
+        }
+        @keyframes inward-glow {
+            0% {
+                box-shadow: inset 0 0 0px 0px rgba(245, 158, 11, 0); /* amber-500, no initial glow */
+            }
+            50% {
+                /* Glow comes from edges: 75px blur, 150px spread */
+                box-shadow: inset 0 0 75px 150px rgba(245, 158, 11, 0.3);
+            }
+            100% {
+                box-shadow: inset 0 0 0px 0px rgba(245, 158, 11, 0); /* Glow recedes */
+            }
+        }
+
+        .action-button {
+            padding: 0.75rem 1.5rem; font-size: 1rem; font-weight: 600;
+            border-radius: 0.5rem; transition: background-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+            cursor: pointer; border: none; outline: none; color: white;
+        }
+        .play-button {
+            background-color: #f97316; /* orange-500 */
+        }
+        .play-button:hover {
+            background-color: #ea580c; /* orange-600 */
+        }
+        .pause-button {
+            background-color: #dc2626; /* red-600 */
+        }
+        .pause-button:hover {
+            background-color: #b91c1c; /* red-700 */
+        }
+    </style>
+</head>
+<body class="bg-neutral-900 text-neutral-300 flex flex-col items-center justify-center min-h-screen p-4 selection:bg-amber-500 selection:text-neutral-900">
+
+    <div id="glowOverlay" class="fixed inset-0 pointer-events-none z-0"></div>
+
+    <div id="appContainer" class="relative z-10 bg-neutral-800 shadow-xl rounded-lg p-6 md:p-10 w-full max-w-md text-center transition-all duration-300">
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold text-amber-400">Awareness Anchor</h1>
+            <p class="text-neutral-400 mt-2">Random tones.</p>
+            <p class="text-neutral-400 mt-2">Adjust average interval, then press Play.</p>
+        </header>
+
+        <main>
+            <div class="mb-6">
+                <button id="playPauseButton" class="action-button play-button">Play</button>
+            </div>
+            <div class="mb-8">
+                <input type="range" id="intervalSlider" min="0" max="100" value="50" class="w-full h-2 rounded-lg appearance-none cursor-pointer">
+            </div>
+            <p id="intervalDisplay" class="text-lg text-neutral-200 mb-2">Average Interval: ~151.5 seconds</p>
+            <p id="nextChimeDebug" class="text-sm text-neutral-500 h-4"></p>
+            <div id="audioPoolContainer" class="hidden"></div>
+            <!-- New silent audio element for background playback -->
+            <audio id="keepAwakeAudio" loop src="https://ericnguyen.com/awarenessanchor/2-seconds-of-silence.mp3"></audio>
+        </main>
+
+        <footer class="mt-6">
+            <p class="text-xs text-neutral-500">Vibe-coded by Eric Nguyen with Gemini 2.5 Pro.</p>
+        </footer>
+    </div>
+
+    <div id="audioErrorModal" class="fixed inset-0 bg-black bg-opacity-75 overflow-y-auto h-full w-full flex items-center justify-center hidden z-50">
+        <div class="bg-neutral-800 border border-neutral-700 p-5 rounded-lg shadow-xl text-center max-w-sm mx-auto">
+            <h3 class="text-lg font-medium leading-6 text-amber-400 mb-2">Audio Issue</h3>
+            <p id="audioErrorText" class="text-sm text-neutral-300 mb-4">Could not start audio. Please interact with the page again or check browser audio permissions.</p>
+            <button id="closeAudioErrorModal" class="px-4 py-2 bg-orange-600 text-white text-base font-medium rounded-md shadow-sm hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-opacity-75">
+                OK
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const intervalSlider = document.getElementById('intervalSlider');
+        const intervalDisplay = document.getElementById('intervalDisplay');
+        const glowOverlay = document.getElementById('glowOverlay');
+        const nextChimeDebug = document.getElementById('nextChimeDebug');
+        const audioErrorModal = document.getElementById('audioErrorModal');
+        const audioErrorText = document.getElementById('audioErrorText');
+        const closeAudioErrorModal = document.getElementById('closeAudioErrorModal');
+        const playPauseButton = document.getElementById('playPauseButton');
+        const audioPoolContainer = document.getElementById('audioPoolContainer');
+        const keepAwakeAudio = document.getElementById('keepAwakeAudio'); // For background audio
+
+        // --- Audio Sources ---
+        // Sounds originally sourced from pixabay.com
+        const chimeSoundUrls = [
+            "https://ericnguyen.com/awarenessanchor/tibetan-bowl_rubbing-rim-30213.mp3",
+            "https://ericnguyen.com/awarenessanchor/himalayan-singing-bowls-62602.mp3",
+            "https://ericnguyen.com/awarenessanchor/047130_bright-tibetan-bell-ding-b-note-72289.mp3",
+            "https://ericnguyen.com/awarenessanchor/singing-bell-hit-2-75258.mp3",
+            "https://ericnguyen.com/awarenessanchor/bell-meditation-75335.mp3",
+        ];
+        if (chimeSoundUrls.length === 0) {
+            console.warn("chimeSoundUrls array is empty! Add MP3 URLs to play sounds.");
+            playPauseButton.disabled = true;
+            playPauseButton.textContent = "No Sounds";
+            playPauseButton.classList.remove('play-button', 'pause-button');
+            playPauseButton.style.backgroundColor = '#525252';
+        }
+
+        // --- Audio Element Pool ---
+        const POOL_SIZE = 5;
+        const audioElements = [];
+        let lastUsedPoolIndex = -1;
+
+        // --- Audio Control ---
+        let audioStarted = false;
+        let scheduledChimeEventId = null;
+        let isPlaying = false;
+
+        // --- Chime Timing ---
+        const minAvgIntervalSeconds = 3;
+        const maxAvgIntervalSeconds = 300;
+        let currentAverageIntervalMs = calculateAverageIntervalMs(parseInt(intervalSlider.value));
+
+        // --- Helper to show custom modal ---
+        function showAudioErrorModal(message) {
+            audioErrorText.textContent = message || "Could not start audio. Please interact with the page again or check browser audio permissions.";
+            audioErrorModal.classList.remove('hidden');
+        }
+        closeAudioErrorModal.addEventListener('click', () => {
+            audioErrorModal.classList.add('hidden');
+        });
+
+        // --- Media Session API Setup ---
+        function setupMediaSession() {
+            if ('mediaSession' in navigator) {
+                console.log("Setting up Media Session API");
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: 'Awareness Anchor',
+                    artist: 'Eric Nguyen',
+                    album: 'A gentle reminder to be present',
+                    // IMPORTANT: Replace with a URL to your actual icon
+                    artwork: [
+                        { src: 'https://ericnguyen.com/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
+                        { src: 'https://ericnguyen.com/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
+                    ]
+                });
+
+                navigator.mediaSession.setActionHandler('play', () => {
+                    console.log("MediaSession: Play action received.");
+                    if (!isPlaying) {
+                        playPauseButton.click(); // Simulate a click to play
+                    }
+                });
+                navigator.mediaSession.setActionHandler('pause', () => {
+                    console.log("MediaSession: Pause action received.");
+                    if (isPlaying) {
+                        playPauseButton.click(); // Simulate a click to pause
+                    }
+                });
+            }
+        }
+
+        // --- Initialization ---
+        function initializeAudio() {
+            if (Tone.Destination.mute) {
+                Tone.Destination.mute = false;
+            }
+
+            if (audioElements.length === 0) {
+                for (let i = 0; i < POOL_SIZE; i++) {
+                    const audioEl = document.createElement('audio');
+                    audioEl.preload = "auto";
+                    audioEl.id = `chimeAudioPlayer_${i}`;
+
+                    audioEl.addEventListener('ended', () => {});
+                    audioEl.addEventListener('error', (e) => {
+                        const audioMediaError = audioEl.error;
+                        let errorMsg = `Audio error for ${audioEl.currentSrc ? audioEl.currentSrc.substring(audioEl.currentSrc.lastIndexOf('/')+1) : 'unknown source'}.`;
+                        if (audioMediaError) {
+                           switch (audioMediaError.code) {
+                                case 1: errorMsg += ' Playback aborted.'; break;
+                                case 2: errorMsg += ' Network error.'; break;
+                                case 3: errorMsg += ' Decoding error.'; break;
+                                case 4: errorMsg += ' Source not supported or inaccessible.'; break;
+                                default: errorMsg += ` Unknown code ${audioMediaError.code}.`;
+                            }
+                        }
+                        showAudioErrorModal(errorMsg);
+                    });
+                    audioPoolContainer.appendChild(audioEl);
+                    audioElements.push(audioEl);
+                }
+                console.log(`${POOL_SIZE} audio elements created and added to the pool.`);
+            }
+            setupMediaSession();
+        }
+
+        function calculateAverageIntervalMs(sliderValue) {
+            const percentage = sliderValue / 100;
+            return (minAvgIntervalSeconds + percentage * (maxAvgIntervalSeconds - minAvgIntervalSeconds)) * 1000;
+        }
+
+        function updateIntervalDisplay() {
+            const averageSeconds = currentAverageIntervalMs / 1000;
+            intervalDisplay.textContent = `Average Interval: ~${averageSeconds.toFixed(1)} seconds`;
+        }
+
+        function playChime(scheduledTime) {
+            if (!audioStarted || Tone.context.state !== 'running' || !isPlaying) {
+                return;
+            }
+            // ... (rest of playChime logic is the same)
+            let foundAudioElement = null;
+            for (let i = 0; i < POOL_SIZE; i++) {
+                lastUsedPoolIndex = (lastUsedPoolIndex + 1) % POOL_SIZE;
+                const el = audioElements[lastUsedPoolIndex];
+                if (el.paused || el.ended || el.currentTime === 0 || el.networkState < 3) {
+                    foundAudioElement = el;
+                    break;
+                }
+            }
+
+            if (!foundAudioElement) {
+                console.warn("All audio elements in the pool are busy. Skipping this chime.");
+                return;
+            }
+
+            const audioElToPlay = foundAudioElement;
+            const randomUrl = chimeSoundUrls[Math.floor(Math.random() * chimeSoundUrls.length)];
+
+            const attemptPlay = () => {
+                const playPromise = audioElToPlay.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(error => {
+                        console.error(`Play promise error for ${audioElToPlay.id}:`, error);
+                        showAudioErrorModal(`Playback of ${randomUrl.substring(randomUrl.lastIndexOf('/')+1)} failed.`);
+                    });
+                }
+            };
+
+            const onErrorDuringLoad = () => {
+                audioElToPlay.removeEventListener('canplaythrough', attemptPlay);
+                showAudioErrorModal(`Failed to load: ${randomUrl.substring(randomUrl.lastIndexOf('/')+1)}.`);
+            };
+
+            if (audioElToPlay.currentSrc !== randomUrl || !audioElToPlay.currentSrc) {
+                audioElToPlay.src = randomUrl;
+                audioElToPlay.addEventListener('canplaythrough', attemptPlay, { once: true });
+                audioElToPlay.addEventListener('error', onErrorDuringLoad, { once: true });
+                audioElToPlay.load();
+            } else if (audioElToPlay.readyState >= 3) { // HAVE_FUTURE_DATA
+                attemptPlay();
+            }
+
+            if (glowOverlay) {
+                glowOverlay.classList.remove('chime-active');
+                void glowOverlay.offsetWidth; // Force reflow to restart animation
+                glowOverlay.classList.add('chime-active');
+            }
+
+            nextChimeDebug.textContent = "";
+        }
+
+        function scheduleChime() {
+            if (!isPlaying || !audioStarted || Tone.Transport.state !== 'started') {
+                return;
+            }
+            if (scheduledChimeEventId !== null) {
+                Tone.Transport.clear(scheduledChimeEventId);
+            }
+            const randomFactor = 0.5 + Math.random();
+            const actualIntervalMs = Math.max(1000, currentAverageIntervalMs * randomFactor);
+            const intervalSeconds = actualIntervalMs / 1000;
+            const nextChimeTransportTime = Tone.now() + intervalSeconds;
+            nextChimeDebug.textContent = `Next chime in ~${Math.round(intervalSeconds)}s`;
+            scheduledChimeEventId = Tone.Transport.scheduleOnce((time) => {
+                if (isPlaying) {
+                    playChime(time);
+                    scheduleChime();
+                }
+            }, nextChimeTransportTime);
+        }
+
+        async function ensureAudioContextStarted() {
+            if (audioStarted && Tone.Transport.state === "started") {
+                 return true;
+            }
+            if (Tone.context.state !== 'running') {
+                try {
+                    await Tone.start();
+                    console.log("AudioContext (via Tone.js) started by user gesture.");
+                    audioStarted = true;
+                    initializeAudio();
+                    if (Tone.Transport.state !== "started") {
+                        Tone.Transport.start("+0.1");
+                        console.log("Tone.Transport started.");
+                    }
+                    return true;
+                } catch (e) {
+                    showAudioErrorModal("Could not enable audio. Please interact with the page again. Error: " + e.message);
+                    return false;
+                }
+            } else {
+                audioStarted = true;
+                initializeAudio();
+                if (Tone.Transport.state !== "started") {
+                    Tone.Transport.start("+0.1");
+                    console.log("Tone.Transport started (context was running).");
+                }
+                return true;
+            }
+        }
+
+        // --- Event Listeners ---
+        playPauseButton.addEventListener('click', async () => {
+            if (chimeSoundUrls.length === 0) {
+                showAudioErrorModal("No audio files are configured.");
+                return;
+            }
+            const audioReady = await ensureAudioContextStarted();
+            if (!audioReady) {
+                // UI update to reflect failure to start
+                isPlaying = false;
+                playPauseButton.textContent = "Play";
+                playPauseButton.classList.remove('pause-button');
+                playPauseButton.classList.add('play-button');
+                return;
+            }
+
+            isPlaying = !isPlaying;
+            if (isPlaying) {
+                playPauseButton.textContent = "Pause";
+                playPauseButton.classList.remove('play-button');
+                playPauseButton.classList.add('pause-button');
+                navigator.mediaSession.playbackState = "playing";
+
+                // Play silent audio to keep app awake
+                const silentPlayPromise = keepAwakeAudio.play();
+                if (silentPlayPromise !== undefined) {
+                    silentPlayPromise.catch(e => console.error("Error playing silent audio:", e));
+                }
+
+                console.log("Playback started by user.");
+                scheduleChime();
+            } else {
+                playPauseButton.textContent = "Play";
+                playPauseButton.classList.remove('pause-button');
+                playPauseButton.classList.add('play-button');
+                navigator.mediaSession.playbackState = "paused";
+
+                keepAwakeAudio.pause(); // Pause silent audio
+
+                console.log("Playback paused by user.");
+                if (scheduledChimeEventId !== null) {
+                    Tone.Transport.clear(scheduledChimeEventId);
+                    scheduledChimeEventId = null;
+                    nextChimeDebug.textContent = "Paused";
+                }
+                audioElements.forEach(audioEl => {
+                    if (!audioEl.paused) {
+                        audioEl.pause();
+                    }
+                });
+                if (glowOverlay) {
+                    glowOverlay.classList.remove('chime-active');
+                }
+            }
+        });
+
+        intervalSlider.addEventListener('input', async (event) => {
+            const audioReady = await ensureAudioContextStarted();
+            if (!audioReady) return;
+            currentAverageIntervalMs = calculateAverageIntervalMs(parseInt(event.target.value));
+            updateIntervalDisplay();
+            if (isPlaying) {
+                scheduleChime();
+            }
+        });
+
+        intervalSlider.addEventListener('pointerdown', async () => {
+            await ensureAudioContextStarted();
+        });
+
+        // --- Initial Setup ---
+        updateIntervalDisplay();
+        console.log("Awareness Anchor app initialized. Press Play to begin.");
+
+    </script>
+</body>
+</html>

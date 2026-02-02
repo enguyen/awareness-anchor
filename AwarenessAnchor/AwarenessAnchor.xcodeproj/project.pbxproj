@@ -1,0 +1,438 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		001 /* AwarenessAnchorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101 /* AwarenessAnchorApp.swift */; };
+		002 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102 /* MenuBarView.swift */; };
+		003 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 103 /* SettingsView.swift */; };
+		004 /* StatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104 /* StatsView.swift */; };
+		005 /* ChimeEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105 /* ChimeEvent.swift */; };
+		006 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106 /* Session.swift */; };
+		007 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 107 /* AppState.swift */; };
+		008 /* ChimeScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108 /* ChimeScheduler.swift */; };
+		009 /* AudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109 /* AudioPlayer.swift */; };
+		010 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110 /* HotkeyManager.swift */; };
+		011 /* DataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111 /* DataStore.swift */; };
+		012 /* HeadPoseDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112 /* HeadPoseDetector.swift */; };
+		013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 115 /* Assets.xcassets */; };
+		014 /* tibetan-bowl-rubbing-rim.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 116 /* tibetan-bowl-rubbing-rim.mp3 */; };
+		015 /* himalayan-singing-bowls.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 117 /* himalayan-singing-bowls.mp3 */; };
+		016 /* bright-tibetan-bell-ding.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 118 /* bright-tibetan-bell-ding.mp3 */; };
+		017 /* singing-bell-hit.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 119 /* singing-bell-hit.mp3 */; };
+		018 /* bell-meditation.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 120 /* bell-meditation.mp3 */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		100 /* AwarenessAnchor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AwarenessAnchor.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		101 /* AwarenessAnchorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AwarenessAnchorApp.swift; sourceTree = "<group>"; };
+		102 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		103 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		104 /* StatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsView.swift; sourceTree = "<group>"; };
+		105 /* ChimeEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChimeEvent.swift; sourceTree = "<group>"; };
+		106 /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
+		107 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		108 /* ChimeScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChimeScheduler.swift; sourceTree = "<group>"; };
+		109 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
+		110 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
+		111 /* DataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataStore.swift; sourceTree = "<group>"; };
+		112 /* HeadPoseDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadPoseDetector.swift; sourceTree = "<group>"; };
+		113 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		114 /* AwarenessAnchor.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AwarenessAnchor.entitlements; sourceTree = "<group>"; };
+		115 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		116 /* tibetan-bowl-rubbing-rim.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "tibetan-bowl-rubbing-rim.mp3"; sourceTree = "<group>"; };
+		117 /* himalayan-singing-bowls.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "himalayan-singing-bowls.mp3"; sourceTree = "<group>"; };
+		118 /* bright-tibetan-bell-ding.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "bright-tibetan-bell-ding.mp3"; sourceTree = "<group>"; };
+		119 /* singing-bell-hit.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "singing-bell-hit.mp3"; sourceTree = "<group>"; };
+		120 /* bell-meditation.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "bell-meditation.mp3"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		200 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		300 = {
+			isa = PBXGroup;
+			children = (
+				301 /* AwarenessAnchor */,
+				302 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		301 /* AwarenessAnchor */ = {
+			isa = PBXGroup;
+			children = (
+				101 /* AwarenessAnchorApp.swift */,
+				303 /* Views */,
+				304 /* Models */,
+				305 /* Services */,
+				306 /* Resources */,
+				115 /* Assets.xcassets */,
+				113 /* Info.plist */,
+				114 /* AwarenessAnchor.entitlements */,
+			);
+			path = AwarenessAnchor;
+			sourceTree = "<group>";
+		};
+		302 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				100 /* AwarenessAnchor.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		303 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				102 /* MenuBarView.swift */,
+				103 /* SettingsView.swift */,
+				104 /* StatsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		304 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				105 /* ChimeEvent.swift */,
+				106 /* Session.swift */,
+				107 /* AppState.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		305 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				108 /* ChimeScheduler.swift */,
+				109 /* AudioPlayer.swift */,
+				110 /* HotkeyManager.swift */,
+				111 /* DataStore.swift */,
+				112 /* HeadPoseDetector.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		306 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				307 /* Sounds */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		307 /* Sounds */ = {
+			isa = PBXGroup;
+			children = (
+				116 /* tibetan-bowl-rubbing-rim.mp3 */,
+				117 /* himalayan-singing-bowls.mp3 */,
+				118 /* bright-tibetan-bell-ding.mp3 */,
+				119 /* singing-bell-hit.mp3 */,
+				120 /* bell-meditation.mp3 */,
+			);
+			path = Sounds;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		400 /* AwarenessAnchor */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 500 /* Build configuration list for PBXNativeTarget "AwarenessAnchor" */;
+			buildPhases = (
+				401 /* Sources */,
+				200 /* Frameworks */,
+				402 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AwarenessAnchor;
+			productName = AwarenessAnchor;
+			productReference = 100 /* AwarenessAnchor.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		600 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					400 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 601 /* Build configuration list for PBXProject "AwarenessAnchor" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 300;
+			productRefGroup = 302 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				400 /* AwarenessAnchor */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		402 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				013 /* Assets.xcassets in Resources */,
+				014 /* tibetan-bowl-rubbing-rim.mp3 in Resources */,
+				015 /* himalayan-singing-bowls.mp3 in Resources */,
+				016 /* bright-tibetan-bell-ding.mp3 in Resources */,
+				017 /* singing-bell-hit.mp3 in Resources */,
+				018 /* bell-meditation.mp3 in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		401 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				001 /* AwarenessAnchorApp.swift in Sources */,
+				002 /* MenuBarView.swift in Sources */,
+				003 /* SettingsView.swift in Sources */,
+				004 /* StatsView.swift in Sources */,
+				005 /* ChimeEvent.swift in Sources */,
+				006 /* Session.swift in Sources */,
+				007 /* AppState.swift in Sources */,
+				008 /* ChimeScheduler.swift in Sources */,
+				009 /* AudioPlayer.swift in Sources */,
+				010 /* HotkeyManager.swift in Sources */,
+				011 /* DataStore.swift in Sources */,
+				012 /* HeadPoseDetector.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		700 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		701 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		702 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = AwarenessAnchor/AwarenessAnchor.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AwarenessAnchor/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Awareness Anchor";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 Eric Nguyen. All rights reserved.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ericnguyen.AwarenessAnchor;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		703 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = AwarenessAnchor/AwarenessAnchor.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AwarenessAnchor/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Awareness Anchor";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 Eric Nguyen. All rights reserved.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ericnguyen.AwarenessAnchor;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		500 /* Build configuration list for PBXNativeTarget "AwarenessAnchor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				702 /* Debug */,
+				703 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		601 /* Build configuration list for PBXProject "AwarenessAnchor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				700 /* Debug */,
+				701 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 600 /* Project object */;
+}
