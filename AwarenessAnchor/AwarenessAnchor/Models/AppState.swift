@@ -13,11 +13,12 @@ class AppState: ObservableObject {
     @Published var responseWindowRemainingSeconds: Double = 0
     @Published var lastChimeTime: Date?
     @Published var todayStats: DayStats = DayStats()
+    @Published var statsNeedRefresh: UUID = UUID()  // Changes to trigger stats refresh
 
     // MARK: - Services
     private let chimeScheduler: ChimeScheduler
     private let audioPlayer: AudioPlayer
-    private let dataStore: DataStore
+    let dataStore: DataStore  // Public for StatsView access
     let headPoseDetector: HeadPoseDetector  // Public for debug UI access
 
     // MARK: - Callbacks
@@ -93,8 +94,16 @@ class AppState: ObservableObject {
     }
 
     func play() {
+        appLog("[AppState] play() called", category: "AppState")
         isPlaying = true
         currentSession = Session(avgIntervalSeconds: averageIntervalSeconds)
+
+        // Save session immediately so chime events can reference it (foreign key constraint)
+        if let session = currentSession {
+            appLog("[AppState] Saving new session: \(session.id.uuidString)", category: "AppState")
+            dataStore.saveSession(session)
+        }
+
         chimeScheduler.start(averageIntervalSeconds: averageIntervalSeconds)
 
         if UserDefaults.standard.bool(forKey: "headPoseEnabled") {
@@ -110,6 +119,37 @@ class AppState: ObservableObject {
         endSession()
     }
 
+    // MARK: - Sleep/Wake Handling
+
+    func handleSleep() {
+        guard isPlaying else { return }
+
+        print("[AppState] System going to sleep - pausing session")
+
+        // Pause chime timer (don't stop - session continues)
+        chimeScheduler.pause()
+
+        // Stop camera and end response window if active
+        if isInResponseWindow {
+            endResponseWindow(responded: false)
+        }
+        headPoseDetector.deactivateWindow()
+    }
+
+    func handleWake() {
+        guard isPlaying else { return }
+
+        print("[AppState] System woke up - resuming session")
+
+        // Resume chime timer
+        chimeScheduler.resume()
+
+        // Re-enable head pose detection if it was enabled
+        if UserDefaults.standard.bool(forKey: "headPoseEnabled") {
+            headPoseDetector.startDetection()
+        }
+    }
+
     func endSession() {
         guard var session = currentSession else { return }
         session.endTime = Date()
@@ -118,7 +158,10 @@ class AppState: ObservableObject {
     }
 
     func recordResponse(_ type: ResponseType) {
+        appLog("[AppState] recordResponse called: \(type)", category: "AppState")
+
         guard isInResponseWindow, let sessionId = currentSession?.id, let chimeTime = lastChimeTime else {
+            appLog("[AppState] recordResponse guard failed - isInResponseWindow=\(isInResponseWindow), sessionId=\(currentSession?.id.uuidString ?? "nil"), chimeTime=\(lastChimeTime?.description ?? "nil")", category: "AppState")
             return
         }
 
@@ -129,6 +172,7 @@ class AppState: ObservableObject {
             sessionId: sessionId
         )
 
+        appLog("[AppState] Calling dataStore.saveChimeEvent", category: "AppState")
         dataStore.saveChimeEvent(event)
         updateTodayStats(with: type)
         endResponseWindow(responded: true)
@@ -225,6 +269,9 @@ class AppState: ObservableObject {
         case .missed:
             todayStats.missedCount += 1
         }
+        // Trigger stats refresh for any listening views
+        appLog("[AppState] Triggering statsNeedRefresh", category: "AppState")
+        statsNeedRefresh = UUID()
     }
 
     private func loadTodayStats() {

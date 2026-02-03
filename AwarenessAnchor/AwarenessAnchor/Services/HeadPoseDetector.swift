@@ -36,6 +36,9 @@ class HeadPoseDetector: NSObject, ObservableObject {
     @Published var currentGazeEdge: GazeEdge = .none
     @Published var gazeIntensity: Float = 0  // 0 to 1, how close to threshold
 
+    // Calibration state - observable by UI
+    @Published var isCalibrationActive: Bool = false
+
     // Callback for when a trigger happens (for wink animation)
     var onGazeTrigger: ((GazeEdge) -> Void)?
 
@@ -201,6 +204,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
         requiresReturnToNeutral = false
 
         DispatchQueue.main.async {
+            self.isCalibrationActive = true
             self.debugBaseline = "Waiting for baseline..."
             self.faceDetected = false
             self.dwellProgress = 0
@@ -217,6 +221,13 @@ class HeadPoseDetector: NSObject, ObservableObject {
         isCalibrationMode = false
         isWindowActive = false
         captureSession?.stopRunning()
+
+        DispatchQueue.main.async {
+            self.isCalibrationActive = false
+            self.currentGazeEdge = .none
+            self.gazeIntensity = 0
+            self.dwellProgress = 0
+        }
     }
 
     func resetCalibrationBaseline() {

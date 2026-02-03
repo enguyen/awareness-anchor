@@ -38,6 +38,10 @@ struct SettingsView: View {
         }
         .frame(width: 480, height: 620)
         .environmentObject(appState)
+        .onDisappear {
+            // Stop calibration if settings window is closed
+            appState.headPoseDetector.stopCalibration()
+        }
     }
 }
 

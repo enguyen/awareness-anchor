@@ -56,6 +56,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Set up response feedback callback
         setupResponseFeedback()
 
+        // Set up sleep/wake observers
+        setupSleepWakeObservers()
+
         // Hide dock icon (menu bar only app)
         NSApp.setActivationPolicy(.accessory)
 
@@ -64,6 +67,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Set up gaze edge glow observer
         setupGazeEdgeObserver()
+    }
+
+    private func setupSleepWakeObservers() {
+        // Observe system sleep
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+
+        // Observe system wake
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleSystemSleep(_ notification: Notification) {
+        appState.handleSleep()
+    }
+
+    @objc private func handleSystemWake(_ notification: Notification) {
+        appState.handleWake()
     }
 
     private func setupGazeEdgeObserver() {
@@ -343,6 +372,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
         }
+
+        // Remove sleep/wake observers
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+
         appState.endSession()
     }
 }

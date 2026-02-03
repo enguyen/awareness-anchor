@@ -124,58 +124,10 @@ struct ResponseWindowView: View {
             Text("⌘⇧1 = Present  •  ⌘⇧2 = Returned")
                 .font(.caption2)
                 .foregroundColor(.secondary)
-
-            // Debug: Head pose info (only show if head pose is enabled)
-            if UserDefaults.standard.bool(forKey: "headPoseEnabled") {
-                Divider()
-                HeadPoseDebugView()
-                    .environmentObject(appState)
-            }
         }
         .padding()
         .background(Color.green.opacity(0.05))
         .cornerRadius(12)
-    }
-}
-
-struct HeadPoseDebugView: View {
-    @EnvironmentObject var appState: AppState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Circle()
-                    .fill(appState.headPoseDetector.faceDetected ? Color.green : Color.red)
-                    .frame(width: 8, height: 8)
-                Text(appState.headPoseDetector.faceDetected ? "Face detected" : "No face")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-
-            Text(appState.headPoseDetector.debugBaseline)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("Pitch: \(String(format: "%.2f", appState.headPoseDetector.debugPitch))")
-                    Text("Up: < -0.26")
-                        .foregroundColor(appState.headPoseDetector.debugPitch < -0.26 ? .green : .secondary)
-                }
-                Spacer()
-                VStack(alignment: .trailing) {
-                    Text("Yaw: \(String(format: "%.2f", appState.headPoseDetector.debugYaw))")
-                    Text("Turn: > 0.35")
-                        .foregroundColor(appState.headPoseDetector.debugYaw > 0.35 ? .orange : .secondary)
-                }
-            }
-            .font(.caption2)
-            .foregroundColor(.secondary)
-            .monospacedDigit()
-        }
-        .padding(8)
-        .background(Color.black.opacity(0.1))
-        .cornerRadius(6)
     }
 }
 

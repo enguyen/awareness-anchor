@@ -4,12 +4,14 @@ struct HeadPoseCalibrationView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var detector: HeadPoseDetector
 
-    @State private var isTestActive = false
     @State private var deltaPitch: Float = 0
     @State private var deltaYaw: Float = 0
     @State private var signedYawDelta: Float = 0
     @State private var triggeredPose: HeadPose? = nil
     @State private var showTriggeredFeedback = false
+
+    // Use detector's published state instead of local state
+    private var isTestActive: Bool { detector.isCalibrationActive }
 
     // Threshold bindings
     @State private var pitchThreshold: Float = 0.12
@@ -199,17 +201,15 @@ struct HeadPoseCalibrationView: View {
     private func toggleTest() {
         if isTestActive {
             detector.stopCalibration()
-            isTestActive = false
             deltaPitch = 0
             signedYawDelta = 0
         } else {
             // Reset UI state before starting
             deltaPitch = 0
             signedYawDelta = 0
-            detector.startCalibration()
-            isTestActive = true
             showTriggeredFeedback = false
             triggeredPose = nil
+            detector.startCalibration()
         }
     }
 }

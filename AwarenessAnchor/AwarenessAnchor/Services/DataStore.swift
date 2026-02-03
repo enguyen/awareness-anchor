@@ -1,6 +1,9 @@
 import Foundation
 import SQLite3
 
+// SQLITE_TRANSIENT tells SQLite to make its own copy of the string
+private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
 class DataStore {
     private var db: OpaquePointer?
     private let dbPath: String
@@ -18,11 +21,14 @@ class DataStore {
     }
 
     func initialize() {
+        appLog("[DataStore] Initializing database at: \(dbPath)", category: "DataStore")
+
         guard sqlite3_open(dbPath, &db) == SQLITE_OK else {
-            print("Error opening database")
+            appLog("[DataStore] ERROR: Failed to open database", category: "DataStore")
             return
         }
 
+        appLog("[DataStore] Database opened successfully", category: "DataStore")
         createTables()
     }
 
@@ -69,16 +75,27 @@ class DataStore {
     // MARK: - Session Operations
 
     func saveSession(_ session: Session) {
+        appLog("[DataStore] saveSession called: \(session.id.uuidString)", category: "DataStore")
+
+        // Ensure database is initialized
+        if db == nil {
+            appLog("[DataStore] db was nil in saveSession, initializing...", category: "DataStore")
+            initialize()
+        }
+
         let sql = """
             INSERT OR REPLACE INTO sessions (id, start_time, end_time, avg_interval_seconds)
             VALUES (?, ?, ?, ?);
         """
 
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return }
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            appLog("[DataStore] ERROR: Failed to prepare saveSession statement", category: "DataStore")
+            return
+        }
         defer { sqlite3_finalize(statement) }
 
-        sqlite3_bind_text(statement, 1, session.id.uuidString, -1, nil)
+        sqlite3_bind_text(statement, 1, session.id.uuidString, -1, SQLITE_TRANSIENT)
         sqlite3_bind_double(statement, 2, session.startTime.timeIntervalSince1970)
         if let endTime = session.endTime {
             sqlite3_bind_double(statement, 3, endTime.timeIntervalSince1970)
@@ -87,7 +104,12 @@ class DataStore {
         }
         sqlite3_bind_double(statement, 4, session.avgIntervalSeconds)
 
-        sqlite3_step(statement)
+        let result = sqlite3_step(statement)
+        if result == SQLITE_DONE {
+            appLog("[DataStore] SUCCESS: Saved session: \(session.id.uuidString)", category: "DataStore")
+        } else {
+            appLog("[DataStore] ERROR: Failed to save session, result=\(result)", category: "DataStore")
+        }
     }
 
     func getSessions(limit: Int = 100) -> [Session] {
@@ -124,26 +146,42 @@ class DataStore {
     // MARK: - Chime Event Operations
 
     func saveChimeEvent(_ event: ChimeEvent) {
+        appLog("[DataStore] saveChimeEvent called: \(event.responseType.rawValue), sessionId=\(event.sessionId.uuidString)", category: "DataStore")
+
+        // Ensure database is initialized
+        if db == nil {
+            appLog("[DataStore] db was nil, initializing...", category: "DataStore")
+            initialize()
+        }
+
         let sql = """
             INSERT INTO chime_events (id, timestamp, response_type, response_time_ms, session_id)
             VALUES (?, ?, ?, ?, ?);
         """
 
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return }
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            appLog("[DataStore] ERROR: Failed to prepare statement for saveChimeEvent", category: "DataStore")
+            return
+        }
         defer { sqlite3_finalize(statement) }
 
-        sqlite3_bind_text(statement, 1, event.id.uuidString, -1, nil)
+        sqlite3_bind_text(statement, 1, event.id.uuidString, -1, SQLITE_TRANSIENT)
         sqlite3_bind_double(statement, 2, event.timestamp.timeIntervalSince1970)
-        sqlite3_bind_text(statement, 3, event.responseType.rawValue, -1, nil)
+        sqlite3_bind_text(statement, 3, event.responseType.rawValue, -1, SQLITE_TRANSIENT)
         if let responseTime = event.responseTimeMs {
             sqlite3_bind_int(statement, 4, Int32(responseTime))
         } else {
             sqlite3_bind_null(statement, 4)
         }
-        sqlite3_bind_text(statement, 5, event.sessionId.uuidString, -1, nil)
+        sqlite3_bind_text(statement, 5, event.sessionId.uuidString, -1, SQLITE_TRANSIENT)
 
-        sqlite3_step(statement)
+        let result = sqlite3_step(statement)
+        if result == SQLITE_DONE {
+            appLog("[DataStore] SUCCESS: Saved chime event: \(event.responseType.rawValue)", category: "DataStore")
+        } else {
+            appLog("[DataStore] ERROR: Failed to save chime event, result=\(result)", category: "DataStore")
+        }
     }
 
     func getEventsForToday() -> [ChimeEvent] {
@@ -207,7 +245,7 @@ class DataStore {
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(statement) }
 
-        sqlite3_bind_text(statement, 1, sessionId.uuidString, -1, nil)
+        sqlite3_bind_text(statement, 1, sessionId.uuidString, -1, SQLITE_TRANSIENT)
 
         var events: [ChimeEvent] = []
         while sqlite3_step(statement) == SQLITE_ROW {
@@ -238,7 +276,17 @@ class DataStore {
     // MARK: - Analytics
 
     func getStats(for period: StatsPeriod) -> StatsData {
+        appLog("[DataStore] getStats called for period: \(period)", category: "DataStore")
+
+        // Ensure database is initialized
+        if db == nil {
+            appLog("[DataStore] db was nil in getStats, initializing...", category: "DataStore")
+            initialize()
+        }
+
         let (startDate, endDate) = period.dateRange
+        appLog("[DataStore] Date range: \(startDate) to \(endDate)", category: "DataStore")
+
         let events = getEvents(from: startDate, to: endDate)
 
         let presentCount = events.filter { $0.responseType == .present }.count
@@ -247,6 +295,8 @@ class DataStore {
 
         let responseTimes = events.compactMap { $0.responseTimeMs }
         let avgResponseTime = responseTimes.isEmpty ? 0 : responseTimes.reduce(0, +) / responseTimes.count
+
+        appLog("[DataStore] getStats result: \(events.count) events (present=\(presentCount), returned=\(returnedCount), missed=\(missedCount))", category: "DataStore")
 
         return StatsData(
             presentCount: presentCount,

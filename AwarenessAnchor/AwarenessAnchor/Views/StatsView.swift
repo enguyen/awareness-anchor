@@ -2,10 +2,9 @@ import SwiftUI
 import Charts
 
 struct StatsView: View {
+    @EnvironmentObject var appState: AppState
     @State private var selectedPeriod: StatsPeriod = .week
     @State private var stats: StatsData = StatsData(presentCount: 0, returnedCount: 0, missedCount: 0, averageResponseTimeMs: 0, totalChimes: 0)
-
-    private let dataStore = DataStore()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -100,11 +99,15 @@ struct StatsView: View {
         .onChange(of: selectedPeriod) { _ in
             loadStats()
         }
+        .onChange(of: appState.statsNeedRefresh) { _ in
+            loadStats()
+        }
     }
 
     private func loadStats() {
-        dataStore.initialize()
-        stats = dataStore.getStats(for: selectedPeriod)
+        appLog("[StatsView] loadStats called for period: \(selectedPeriod)", category: "StatsView")
+        stats = appState.dataStore.getStats(for: selectedPeriod)
+        appLog("[StatsView] Loaded stats: totalChimes=\(stats.totalChimes)", category: "StatsView")
     }
 }
 
@@ -179,4 +182,5 @@ struct ChartDataPoint: Identifiable {
 
 #Preview {
     StatsView()
+        .environmentObject(AppState.shared)
 }
