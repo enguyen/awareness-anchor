@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 @main
 struct AwarenessAnchorApp: App {
@@ -21,6 +22,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var eventMonitor: Any?
     private var iconResetTimer: Timer?
     private var feedbackWindow: NSWindow?
+    private var gazeGlowWindow: NSWindow?
+    private var gazeGlowView: GradientGlowView?
+    private var gazeEdgeCancellable: AnyCancellable?
+    private var gazeIntensityCancellable: AnyCancellable?
+    private var currentGazeEdge: GazeEdge = .none
+    private var isWinkAnimating: Bool = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -54,6 +61,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Initialize services
         appState.initialize()
+
+        // Set up gaze edge glow observer
+        setupGazeEdgeObserver()
+    }
+
+    private func setupGazeEdgeObserver() {
+        let detector = appState.headPoseDetector
+
+        // Observe gaze edge changes
+        gazeEdgeCancellable = detector.$currentGazeEdge
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] edge in
+                self?.currentGazeEdge = edge
+                self?.updateGazeGlow(edge: edge, intensity: detector.gazeIntensity)
+            }
+
+        // Observe gaze intensity changes
+        gazeIntensityCancellable = detector.$gazeIntensity
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] intensity in
+                guard let self = self else { return }
+                self.updateGazeGlow(edge: self.currentGazeEdge, intensity: intensity)
+            }
+
+        // Set up trigger callback for wink animation
+        detector.onGazeTrigger = { [weak self] edge in
+            self?.performWinkAnimation(for: edge)
+        }
     }
 
     @objc func togglePopover() {
@@ -103,11 +138,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Visual Feedback
 
     func showResponseFeedback(_ type: ResponseType) {
+        // Ensure main thread
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.showResponseFeedback(type)
+            }
+            return
+        }
+
         // 1. Change menu bar icon temporarily
         showIconFeedback(for: type)
 
-        // 2. Show screen edge glow
-        showScreenGlow(for: type)
+        // 2. Show screen edge glow (disabled for debugging)
+        // showScreenGlow(for: type)
     }
 
     private func showIconFeedback(for type: ResponseType) {
@@ -133,6 +176,113 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 button.image = NSImage(systemSymbolName: "bell.fill", accessibilityDescription: "Awareness Anchor")
             }
         }
+    }
+
+    private func updateGazeGlow(edge: GazeEdge, intensity: Float) {
+        // Don't update during wink animation
+        if isWinkAnimating { return }
+
+        // Hide glow if no edge or zero intensity
+        if edge == .none || intensity < 0.01 {
+            gazeGlowWindow?.orderOut(nil)
+            return
+        }
+
+        guard let screen = NSScreen.main else { return }
+        let screenFrame = screen.frame
+        let glowDepth: CGFloat = 100  // Gradient extends 100px from edge
+
+        // Calculate window frame and gradient direction based on edge
+        let windowFrame: NSRect
+        let color: NSColor
+        let gradientDirection: GradientGlowView.GradientDirection
+
+        switch edge {
+        case .top:
+            windowFrame = NSRect(
+                x: screenFrame.minX,
+                y: screenFrame.maxY - glowDepth,
+                width: screenFrame.width,
+                height: glowDepth
+            )
+            color = NSColor.systemGreen
+            gradientDirection = .fromTop
+        case .left:
+            windowFrame = NSRect(
+                x: screenFrame.minX,
+                y: screenFrame.minY,
+                width: glowDepth,
+                height: screenFrame.height
+            )
+            color = NSColor.systemOrange
+            gradientDirection = .fromLeft
+        case .right:
+            windowFrame = NSRect(
+                x: screenFrame.maxX - glowDepth,
+                y: screenFrame.minY,
+                width: glowDepth,
+                height: screenFrame.height
+            )
+            color = NSColor.systemOrange
+            gradientDirection = .fromRight
+        case .none:
+            return
+        }
+
+        // Create window and view if needed
+        if gazeGlowWindow == nil {
+            let window = NSWindow(
+                contentRect: windowFrame,
+                styleMask: .borderless,
+                backing: .buffered,
+                defer: false
+            )
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.level = .screenSaver
+            window.ignoresMouseEvents = true
+            window.collectionBehavior = [.canJoinAllSpaces, .stationary]
+            window.hasShadow = false
+
+            let glowView = GradientGlowView(frame: NSRect(origin: .zero, size: windowFrame.size))
+            window.contentView = glowView
+            gazeGlowWindow = window
+            gazeGlowView = glowView
+        }
+
+        // Update window frame and view
+        gazeGlowWindow?.setFrame(windowFrame, display: false)
+        gazeGlowView?.frame = NSRect(origin: .zero, size: windowFrame.size)
+        gazeGlowView?.updateGlow(color: color, direction: gradientDirection, intensity: CGFloat(intensity))
+        gazeGlowWindow?.orderFront(nil)
+    }
+
+    private func performWinkAnimation(for edge: GazeEdge) {
+        guard let glowView = gazeGlowView else { return }
+
+        // Block gaze updates during wink
+        isWinkAnimating = true
+
+        // Set to white for the wink
+        glowView.updateGlow(color: .white, direction: glowView.currentDirection, intensity: 1.0)
+
+        // Single wink: fade in quickly, then fade out
+        glowView.alphaValue = 0
+        gazeGlowWindow?.orderFront(nil)
+
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.1
+            glowView.animator().alphaValue = 1.0
+        }, completionHandler: { [weak self] in
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.2
+                self?.gazeGlowView?.animator().alphaValue = 0.0
+            }, completionHandler: { [weak self] in
+                self?.gazeGlowWindow?.orderOut(nil)
+                self?.gazeGlowView?.alphaValue = 1.0  // Reset for next use
+                self?.isWinkAnimating = false  // Allow gaze updates again
+            })
+        })
     }
 
     private func showScreenGlow(for type: ResponseType) {
@@ -194,6 +344,77 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSEvent.removeMonitor(monitor)
         }
         appState.endSession()
+    }
+}
+
+// MARK: - Gradient Glow View
+
+class GradientGlowView: NSView {
+    enum GradientDirection {
+        case fromTop
+        case fromLeft
+        case fromRight
+    }
+
+    private var gradientLayer: CAGradientLayer?
+    private var glowColor: NSColor = .systemGreen
+    private(set) var currentDirection: GradientDirection = .fromTop
+    private var intensity: CGFloat = 0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        setupGradientLayer()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+        setupGradientLayer()
+    }
+
+    private func setupGradientLayer() {
+        let gradient = CAGradientLayer()
+        gradient.frame = bounds
+        layer?.addSublayer(gradient)
+        gradientLayer = gradient
+    }
+
+    override func layout() {
+        super.layout()
+        gradientLayer?.frame = bounds
+        updateGradient()
+    }
+
+    func updateGlow(color: NSColor, direction: GradientDirection, intensity: CGFloat) {
+        self.glowColor = color
+        self.currentDirection = direction
+        self.intensity = intensity
+        updateGradient()
+    }
+
+    private func updateGradient() {
+        guard let gradient = gradientLayer else { return }
+
+        // Apply intensity to alpha (0 at center of frustum, 1 at threshold)
+        let alpha = intensity * 0.8  // Max 80% opacity at full intensity
+        let opaqueColor = glowColor.withAlphaComponent(alpha).cgColor
+        let transparentColor = glowColor.withAlphaComponent(0).cgColor
+
+        gradient.colors = [opaqueColor, transparentColor]
+
+        // Set gradient direction based on edge
+        switch currentDirection {
+        case .fromTop:
+            gradient.startPoint = CGPoint(x: 0.5, y: 1.0)  // Top
+            gradient.endPoint = CGPoint(x: 0.5, y: 0.0)    // Bottom (into screen)
+        case .fromLeft:
+            gradient.startPoint = CGPoint(x: 0.0, y: 0.5)  // Left edge
+            gradient.endPoint = CGPoint(x: 1.0, y: 0.5)    // Right (into screen)
+        case .fromRight:
+            gradient.startPoint = CGPoint(x: 1.0, y: 0.5)  // Right edge
+            gradient.endPoint = CGPoint(x: 0.0, y: 0.5)    // Left (into screen)
+        }
     }
 }
 

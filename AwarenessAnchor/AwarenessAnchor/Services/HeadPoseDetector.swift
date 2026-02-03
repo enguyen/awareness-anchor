@@ -8,6 +8,14 @@ enum HeadPose {
     case turnLeftRight  // Yaw > threshold -> "Returned to awareness"
 }
 
+/// Screen edge for gaze direction indicator
+enum GazeEdge {
+    case none
+    case top      // Looking up
+    case left     // Turned left
+    case right    // Turned right
+}
+
 class HeadPoseDetector: NSObject, ObservableObject {
     var onPoseDetected: ((HeadPose) -> Void)?
 
@@ -23,6 +31,13 @@ class HeadPoseDetector: NSObject, ObservableObject {
     @Published var debugRawYaw: Float = 0
     @Published var debugBaseline: String = "No baseline"
     @Published var faceDetected: Bool = false
+
+    // Current gaze direction for screen edge glow
+    @Published var currentGazeEdge: GazeEdge = .none
+    @Published var gazeIntensity: Float = 0  // 0 to 1, how close to threshold
+
+    // Callback for when a trigger happens (for wink animation)
+    var onGazeTrigger: ((GazeEdge) -> Void)?
 
     // Track if face was ever detected during this response window
     private(set) var faceWasDetectedThisWindow: Bool = false
@@ -77,6 +92,9 @@ class HeadPoseDetector: NSObject, ObservableObject {
     private var currentDwellPose: HeadPose = .neutral
     @Published var dwellProgress: Float = 0  // 0 to 1, for UI display
 
+    // Prevent re-triggering until user returns to neutral
+    private var requiresReturnToNeutral: Bool = false
+
     func startDetection() {
         guard captureSession == nil else { return }
 
@@ -130,6 +148,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
         framesToSkip = 3  // Skip first few frames to let camera stabilize
         dwellStartTime = nil
         currentDwellPose = .neutral
+        requiresReturnToNeutral = false
 
         DispatchQueue.main.async {
             self.debugBaseline = "Calibrating..."
@@ -149,6 +168,11 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
         // Stop camera to save resources
         captureSession?.stopRunning()
+
+        // Reset gaze edge
+        DispatchQueue.main.async {
+            self.currentGazeEdge = .none
+        }
     }
 
     // MARK: - Calibration Mode
@@ -174,6 +198,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
         framesToSkip = 3  // Skip first few frames to let camera stabilize
         dwellStartTime = nil
         currentDwellPose = .neutral
+        requiresReturnToNeutral = false
 
         DispatchQueue.main.async {
             self.debugBaseline = "Waiting for baseline..."
@@ -201,6 +226,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
         isFirstReading = true
         dwellStartTime = nil
         currentDwellPose = .neutral
+        requiresReturnToNeutral = false
         DispatchQueue.main.async {
             self.debugBaseline = "Waiting for baseline..."
             self.debugPitch = 0
@@ -226,6 +252,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
                   let face = results.first else {
                 DispatchQueue.main.async {
                     self.faceDetected = false
+                    self.currentGazeEdge = .none
                 }
                 return
             }
@@ -296,13 +323,38 @@ class HeadPoseDetector: NSObject, ObservableObject {
         let signedYawDelta = smoothedYaw - (baselineYaw ?? 0)
         let yawDelta = abs(signedYawDelta)
 
-        // Update debug values on main thread
+        // Update debug values and gaze edge on main thread
         DispatchQueue.main.async {
             self.faceDetected = true
             self.debugPitch = pitchDelta
             self.debugYaw = yawDelta
             self.debugRawPitch = pitch
             self.debugRawYaw = yaw
+
+            // Update gaze edge and intensity for screen glow indicator
+            // Intensity goes from 0 (center) to 1 (at threshold)
+            let yawThresh = self.yawThreshold
+            let pitchThresh = self.pitchThreshold
+
+            // Calculate intensity as ratio of delta to threshold (clamped 0-1)
+            let yawIntensity = min(abs(signedYawDelta) / yawThresh, 1.0)
+            let pitchIntensity = min(abs(pitchDelta) / pitchThresh, 1.0)
+
+            // Determine edge based on which direction has highest intensity
+            // Swap left/right: positive yaw = looking left, negative = looking right (camera mirror)
+            if signedYawDelta > 0.02 && yawIntensity > pitchIntensity {
+                self.currentGazeEdge = .left  // Positive yaw = left
+                self.gazeIntensity = yawIntensity
+            } else if signedYawDelta < -0.02 && yawIntensity > pitchIntensity {
+                self.currentGazeEdge = .right  // Negative yaw = right
+                self.gazeIntensity = yawIntensity
+            } else if pitchDelta < -0.02 {
+                self.currentGazeEdge = .top
+                self.gazeIntensity = pitchIntensity
+            } else {
+                self.currentGazeEdge = .none
+                self.gazeIntensity = 0
+            }
         }
 
         // Send calibration updates if in calibration mode
@@ -343,6 +395,11 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
         // Dwell time tracking
         if detectedPose != .neutral {
+            // Don't start new dwell if we're waiting for return to neutral
+            if requiresReturnToNeutral {
+                return
+            }
+
             if detectedPose == currentDwellPose, let startTime = dwellStartTime {
                 // Same pose, check if dwell time exceeded
                 let elapsed = Float(Date().timeIntervalSince(startTime))
@@ -360,17 +417,32 @@ class HeadPoseDetector: NSObject, ObservableObject {
                         appLog("[HP]TRIGGERED: Tilt Up (Present) - pitch=\(pitchDelta) < -\(currentPitchThreshold), dwell=\(elapsed)s")
                     }
 
+                    // Determine triggered edge for wink animation
+                    let triggeredEdge: GazeEdge
+                    if detectedPose == .tiltUp {
+                        triggeredEdge = .top
+                    } else if signedYawDelta > 0 {
+                        triggeredEdge = .left  // Positive yaw = left (camera mirror)
+                    } else {
+                        triggeredEdge = .right
+                    }
+
+                    // Require return to neutral before next trigger
+                    requiresReturnToNeutral = true
+
                     if isCalibrationMode {
                         // Don't set hasRespondedThisWindow in calibration mode
                         // to allow repeated triggers for testing
                         DispatchQueue.main.async {
                             self.dwellProgress = 0
+                            self.onGazeTrigger?(triggeredEdge)
                             self.onCalibrationTriggered?(detectedPose)
                         }
                     } else {
                         hasRespondedThisWindow = true
                         DispatchQueue.main.async {
                             self.dwellProgress = 0
+                            self.onGazeTrigger?(triggeredEdge)
                             self.onPoseDetected?(detectedPose)
                         }
                     }
@@ -388,10 +460,11 @@ class HeadPoseDetector: NSObject, ObservableObject {
                 }
             }
         } else {
-            // Back to neutral, reset dwell tracking
-            if dwellStartTime != nil || currentDwellPose != .neutral {
+            // Back to neutral, reset dwell tracking and allow new triggers
+            if dwellStartTime != nil || currentDwellPose != .neutral || requiresReturnToNeutral {
                 dwellStartTime = nil
                 currentDwellPose = .neutral
+                requiresReturnToNeutral = false  // Can trigger again after returning to neutral
                 DispatchQueue.main.async {
                     self.dwellProgress = 0
                 }
