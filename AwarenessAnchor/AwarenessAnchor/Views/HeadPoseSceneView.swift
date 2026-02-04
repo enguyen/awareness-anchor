@@ -10,6 +10,7 @@ struct HeadPoseSceneView: NSViewRepresentable {
     let dwellProgress: Float
     let isTestActive: Bool
     let faceDetected: Bool
+    let isInCooldown: Bool
 
     func makeNSView(context: Context) -> SCNView {
         let scnView = SCNView()
@@ -28,7 +29,8 @@ struct HeadPoseSceneView: NSViewRepresentable {
             signedYawDelta: signedYawDelta,
             dwellProgress: dwellProgress,
             isTestActive: isTestActive,
-            faceDetected: faceDetected
+            faceDetected: faceDetected,
+            isInCooldown: isInCooldown
         )
     }
 
@@ -129,20 +131,20 @@ struct HeadPoseSceneView: NSViewRepresentable {
             frustumNode.position = SCNVector3(x: 0, y: 0.1, z: 0)
             scene.rootNode.addChildNode(frustumNode)
 
-            // Create materials
+            // Create materials (50% reduced opacity)
             sidePlaneMaterial = SCNMaterial()
-            sidePlaneMaterial.diffuse.contents = NSColor(calibratedRed: 0.8, green: 0.5, blue: 0.1, alpha: 0.35)
-            sidePlaneMaterial.emission.contents = NSColor(calibratedRed: 0.6, green: 0.4, blue: 0.1, alpha: 0.1)
+            sidePlaneMaterial.diffuse.contents = NSColor(calibratedRed: 0.8, green: 0.5, blue: 0.1, alpha: 0.175)
+            sidePlaneMaterial.emission.contents = NSColor(calibratedRed: 0.6, green: 0.4, blue: 0.1, alpha: 0.05)
             sidePlaneMaterial.transparent.contents = NSColor.white
-            sidePlaneMaterial.transparency = 0.65
+            sidePlaneMaterial.transparency = 0.825
             sidePlaneMaterial.isDoubleSided = true
             sidePlaneMaterial.lightingModel = .physicallyBased
 
             topPlaneMaterial = SCNMaterial()
-            topPlaneMaterial.diffuse.contents = NSColor(calibratedRed: 0.2, green: 0.7, blue: 0.3, alpha: 0.4)
-            topPlaneMaterial.emission.contents = NSColor(calibratedRed: 0.1, green: 0.5, blue: 0.2, alpha: 0.15)
+            topPlaneMaterial.diffuse.contents = NSColor(calibratedRed: 0.2, green: 0.7, blue: 0.3, alpha: 0.2)
+            topPlaneMaterial.emission.contents = NSColor(calibratedRed: 0.1, green: 0.5, blue: 0.2, alpha: 0.075)
             topPlaneMaterial.transparent.contents = NSColor.white
-            topPlaneMaterial.transparency = 0.6
+            topPlaneMaterial.transparency = 0.8
             topPlaneMaterial.isDoubleSided = true
             topPlaneMaterial.lightingModel = .physicallyBased
 
@@ -292,20 +294,25 @@ struct HeadPoseSceneView: NSViewRepresentable {
 
         func updateScene(pitchThreshold: Float, yawThreshold: Float,
                          deltaPitch: Float, signedYawDelta: Float,
-                         dwellProgress: Float, isTestActive: Bool, faceDetected: Bool) {
+                         dwellProgress: Float, isTestActive: Bool, faceDetected: Bool,
+                         isInCooldown: Bool) {
 
             // Rebuild frustum if thresholds changed significantly
             rebuildFrustum(pitchThreshold: pitchThreshold, yawThreshold: yawThreshold)
 
-            // Update head visibility/color based on face detection
+            // Update head visibility/color based on face detection and cooldown state
+            // Gray state: no face detected OR in cooldown (initializing)
+            let showGrayState = !faceDetected || isInCooldown
             if let headGeometry = headNode.geometry as? SCNSphere,
                let material = headGeometry.materials.first {
-                if faceDetected {
-                    material.diffuse.contents = NSColor(calibratedRed: 0.2, green: 0.5, blue: 0.9, alpha: 0.4)
-                    material.emission.contents = NSColor(calibratedRed: 0.1, green: 0.3, blue: 0.8, alpha: 0.3)
-                } else {
+                if showGrayState {
+                    // Gray state - no face or in cooldown
                     material.diffuse.contents = NSColor(calibratedRed: 0.4, green: 0.4, blue: 0.4, alpha: 0.3)
                     material.emission.contents = NSColor(calibratedRed: 0.2, green: 0.2, blue: 0.2, alpha: 0.1)
+                } else {
+                    // Normal blue state
+                    material.diffuse.contents = NSColor(calibratedRed: 0.2, green: 0.5, blue: 0.9, alpha: 0.4)
+                    material.emission.contents = NSColor(calibratedRed: 0.1, green: 0.3, blue: 0.8, alpha: 0.3)
                 }
             }
 
@@ -371,7 +378,8 @@ struct HeadPoseSceneView: NSViewRepresentable {
         signedYawDelta: 0.1,
         dwellProgress: 0.3,
         isTestActive: true,
-        faceDetected: true
+        faceDetected: true,
+        isInCooldown: false
     )
     .frame(width: 300, height: 300)
 }

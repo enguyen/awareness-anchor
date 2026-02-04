@@ -22,12 +22,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var eventMonitor: Any?
     private var iconResetTimer: Timer?
     private var feedbackWindow: NSWindow?
-    private var gazeGlowWindow: NSWindow?
-    private var gazeGlowView: GradientGlowView?
-    private var gazeEdgeCancellable: AnyCancellable?
+
+    // Multi-directional glow windows
+    private var topGlowWindow: NSWindow?
+    private var leftGlowWindow: NSWindow?
+    private var rightGlowWindow: NSWindow?
+    private var topGlowView: GradientGlowView?
+    private var leftGlowView: GradientGlowView?
+    private var rightGlowView: GradientGlowView?
+
+    // Smoothed glow intensities (extra smoothing for subtle effect)
+    private var smoothedTopIntensity: CGFloat = 0
+    private var smoothedLeftIntensity: CGFloat = 0
+    private var smoothedRightIntensity: CGFloat = 0
+
     private var gazeIntensityCancellable: AnyCancellable?
+    private var topIntensityCancellable: AnyCancellable?
+    private var leftIntensityCancellable: AnyCancellable?
+    private var rightIntensityCancellable: AnyCancellable?
+    private var calibrationActiveCancellable: AnyCancellable?
     private var currentGazeEdge: GazeEdge = .none
     private var isWinkAnimating: Bool = false
+    private var activeWinkEdge: GazeEdge = .none  // Track which edge has active white glow
+    private var isInCooldown: Bool = false  // Cooldown after return to neutral in calibration
+
+    @AppStorage("screenGlowEnabled") private var screenGlowEnabled = true
+    @AppStorage("screenGlowOpacity") private var screenGlowOpacity = 0.5
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -98,26 +118,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupGazeEdgeObserver() {
         let detector = appState.headPoseDetector
 
-        // Observe gaze edge changes
-        gazeEdgeCancellable = detector.$currentGazeEdge
+        // Observe gaze edge changes (for legacy currentGazeEdge tracking)
+        gazeIntensityCancellable = detector.$currentGazeEdge
             .receive(on: DispatchQueue.main)
             .sink { [weak self] edge in
                 self?.currentGazeEdge = edge
-                self?.updateGazeGlow(edge: edge, intensity: detector.gazeIntensity)
             }
 
-        // Observe gaze intensity changes
-        gazeIntensityCancellable = detector.$gazeIntensity
+        // Observe separate intensities for multi-directional glow
+        topIntensityCancellable = detector.$topIntensity
             .receive(on: DispatchQueue.main)
             .sink { [weak self] intensity in
-                guard let self = self else { return }
-                self.updateGazeGlow(edge: self.currentGazeEdge, intensity: intensity)
+                self?.updateEdgeGlow(edge: .top, rawIntensity: CGFloat(intensity))
+            }
+
+        leftIntensityCancellable = detector.$leftIntensity
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] intensity in
+                self?.updateEdgeGlow(edge: .left, rawIntensity: CGFloat(intensity))
+            }
+
+        rightIntensityCancellable = detector.$rightIntensity
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] intensity in
+                self?.updateEdgeGlow(edge: .right, rawIntensity: CGFloat(intensity))
             }
 
         // Set up trigger callback for wink animation
         detector.onGazeTrigger = { [weak self] edge in
             self?.performWinkAnimation(for: edge)
         }
+
+        // Set up return-to-neutral callback for fading out white glow
+        detector.onReturnToNeutral = { [weak self] in
+            self?.handleReturnToNeutral()
+        }
+
+        // Hide all glows when calibration/tracking stops
+        calibrationActiveCancellable = detector.$isCalibrationActive
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isActive in
+                if !isActive {
+                    self?.hideAllGlowWindows()
+                    self?.smoothedTopIntensity = 0
+                    self?.smoothedLeftIntensity = 0
+                    self?.smoothedRightIntensity = 0
+                }
+            }
     }
 
     @objc func togglePopover() {
@@ -207,25 +254,85 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func updateGazeGlow(edge: GazeEdge, intensity: Float) {
-        // Don't update during wink animation
-        if isWinkAnimating { return }
+    private func updateEdgeGlow(edge: GazeEdge, rawIntensity: CGFloat) {
+        // Don't update during wink animation or cooldown period
+        if isWinkAnimating || isInCooldown { return }
 
-        // Hide glow if no edge or zero intensity
-        if edge == .none || intensity < 0.01 {
-            gazeGlowWindow?.orderOut(nil)
+        // Check if glow is enabled
+        if !screenGlowEnabled {
+            hideAllGlowWindows()
+            return
+        }
+
+        // Get extra smoothing factor (smoothingFactor + 0.1, clamped to max 0.95)
+        let baseSmoothingFactor = CGFloat(appState.headPoseDetector.smoothingFactor)
+        let glowSmoothing = min(baseSmoothingFactor + 0.1, 0.95)
+
+        // Get gaze position for bulge effect
+        let yawPosition = CGFloat(appState.headPoseDetector.normalizedYawPosition)
+        let pitchPosition = CGFloat(appState.headPoseDetector.normalizedPitchPosition)
+
+        // Apply extra smoothing and update the appropriate edge
+        switch edge {
+        case .top:
+            smoothedTopIntensity = glowSmoothing * smoothedTopIntensity + (1 - glowSmoothing) * rawIntensity
+            updateSingleEdgeGlow(
+                edge: .top,
+                intensity: smoothedTopIntensity,
+                bulgePosition: yawPosition,  // Horizontal position for top edge
+                window: &topGlowWindow,
+                view: &topGlowView,
+                color: .systemGreen,
+                direction: .fromTop
+            )
+        case .left:
+            smoothedLeftIntensity = glowSmoothing * smoothedLeftIntensity + (1 - glowSmoothing) * rawIntensity
+            updateSingleEdgeGlow(
+                edge: .left,
+                intensity: smoothedLeftIntensity,
+                bulgePosition: pitchPosition,  // Vertical position for left edge
+                window: &leftGlowWindow,
+                view: &leftGlowView,
+                color: .systemOrange,
+                direction: .fromLeft
+            )
+        case .right:
+            smoothedRightIntensity = glowSmoothing * smoothedRightIntensity + (1 - glowSmoothing) * rawIntensity
+            updateSingleEdgeGlow(
+                edge: .right,
+                intensity: smoothedRightIntensity,
+                bulgePosition: pitchPosition,  // Vertical position for right edge
+                window: &rightGlowWindow,
+                view: &rightGlowView,
+                color: .systemOrange,
+                direction: .fromRight
+            )
+        case .none:
+            break
+        }
+    }
+
+    private func updateSingleEdgeGlow(
+        edge: GazeEdge,
+        intensity: CGFloat,
+        bulgePosition: CGFloat,
+        window: inout NSWindow?,
+        view: inout GradientGlowView?,
+        color: NSColor,
+        direction: GradientGlowView.GradientDirection
+    ) {
+        // Hide if intensity too low
+        if intensity < 0.01 {
+            window?.orderOut(nil)
             return
         }
 
         guard let screen = NSScreen.main else { return }
         let screenFrame = screen.frame
-        let glowDepth: CGFloat = 100  // Gradient extends 100px from edge
+        let glowDepth: CGFloat = 300  // Larger to accommodate 2x bulge
 
-        // Calculate window frame and gradient direction based on edge
+        // Calculate window frame based on edge
         let windowFrame: NSRect
-        let color: NSColor
-        let gradientDirection: GradientGlowView.GradientDirection
-
         switch edge {
         case .top:
             windowFrame = NSRect(
@@ -234,8 +341,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 width: screenFrame.width,
                 height: glowDepth
             )
-            color = NSColor.systemGreen
-            gradientDirection = .fromTop
         case .left:
             windowFrame = NSRect(
                 x: screenFrame.minX,
@@ -243,8 +348,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 width: glowDepth,
                 height: screenFrame.height
             )
-            color = NSColor.systemOrange
-            gradientDirection = .fromLeft
         case .right:
             windowFrame = NSRect(
                 x: screenFrame.maxX - glowDepth,
@@ -252,66 +355,356 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 width: glowDepth,
                 height: screenFrame.height
             )
-            color = NSColor.systemOrange
-            gradientDirection = .fromRight
         case .none:
             return
         }
 
         // Create window and view if needed
-        if gazeGlowWindow == nil {
-            let window = NSWindow(
+        if window == nil {
+            let newWindow = NSWindow(
                 contentRect: windowFrame,
                 styleMask: .borderless,
                 backing: .buffered,
                 defer: false
             )
-            window.isOpaque = false
-            window.backgroundColor = .clear
-            window.level = .screenSaver
-            window.ignoresMouseEvents = true
-            window.collectionBehavior = [.canJoinAllSpaces, .stationary]
-            window.hasShadow = false
+            newWindow.isOpaque = false
+            newWindow.backgroundColor = .clear
+            newWindow.level = .screenSaver
+            newWindow.ignoresMouseEvents = true
+            newWindow.collectionBehavior = [.canJoinAllSpaces, .stationary]
+            newWindow.hasShadow = false
 
             let glowView = GradientGlowView(frame: NSRect(origin: .zero, size: windowFrame.size))
-            window.contentView = glowView
-            gazeGlowWindow = window
-            gazeGlowView = glowView
+            newWindow.contentView = glowView
+            window = newWindow
+            view = glowView
         }
 
         // Update window frame and view
-        gazeGlowWindow?.setFrame(windowFrame, display: false)
-        gazeGlowView?.frame = NSRect(origin: .zero, size: windowFrame.size)
-        gazeGlowView?.updateGlow(color: color, direction: gradientDirection, intensity: CGFloat(intensity))
-        gazeGlowWindow?.orderFront(nil)
+        window?.setFrame(windowFrame, display: false)
+        view?.frame = NSRect(origin: .zero, size: windowFrame.size)
+        // Pass intensity as bulgeAmount so bulge grows as gaze approaches this edge
+        view?.updateGlow(color: color, direction: direction, intensity: intensity, bulgePosition: bulgePosition, bulgeAmount: intensity, maxOpacity: screenGlowOpacity)
+        window?.orderFront(nil)
+    }
+
+    private func hideAllGlowWindows() {
+        topGlowWindow?.orderOut(nil)
+        leftGlowWindow?.orderOut(nil)
+        rightGlowWindow?.orderOut(nil)
     }
 
     private func performWinkAnimation(for edge: GazeEdge) {
-        guard let glowView = gazeGlowView else { return }
+        // Check if glow is enabled
+        if !screenGlowEnabled { return }
 
-        // Block gaze updates during wink
+        // Ignore triggers during cooldown period
+        if isInCooldown { return }
+
+        // Ensure window exists for this edge by calling updateEdgeGlow first
+        // This creates the window if needed
+        ensureGlowWindowExists(for: edge)
+
+        // Get the appropriate window and view for this edge
+        let glowWindow: NSWindow?
+        let glowView: GradientGlowView?
+
+        switch edge {
+        case .top:
+            glowWindow = topGlowWindow
+            glowView = topGlowView
+        case .left:
+            glowWindow = leftGlowWindow
+            glowView = leftGlowView
+        case .right:
+            glowWindow = rightGlowWindow
+            glowView = rightGlowView
+        case .none:
+            return
+        }
+
+        guard let view = glowView, let window = glowWindow else { return }
+
+        // Check if we're in calibration mode - different behavior for each
+        let isCalibrationMode = appState.headPoseDetector.isCalibrationActive
+
+        // Block gaze updates during wink and track active edge
         isWinkAnimating = true
+        activeWinkEdge = edge
+        window.orderFront(nil)
 
-        // Set to white for the wink
-        glowView.updateGlow(color: .white, direction: glowView.currentDirection, intensity: 1.0)
+        // Phase 1: Fade out original color with sine curve (0.2s)
+        let fadeOutAnimation = CAKeyframeAnimation(keyPath: "opacity")
+        fadeOutAnimation.duration = 0.2
 
-        // Single wink: fade in quickly, then fade out
-        glowView.alphaValue = 0
-        gazeGlowWindow?.orderFront(nil)
+        // Generate sine-based fade out (1 -> 0 following quarter sine curve)
+        var fadeOutValues: [CGFloat] = []
+        let fadeOutSteps = 10
+        for i in 0...fadeOutSteps {
+            let t = CGFloat(i) / CGFloat(fadeOutSteps)  // 0 to 1
+            let sineValue = cos(t * .pi / 2)  // cos(0) = 1, cos(π/2) = 0 - smooth deceleration
+            fadeOutValues.append(sineValue)
+        }
+        fadeOutAnimation.values = fadeOutValues
+        fadeOutAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
+        fadeOutAnimation.fillMode = .forwards
+        fadeOutAnimation.isRemovedOnCompletion = false
 
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.1
-            glowView.animator().alphaValue = 1.0
-        }, completionHandler: { [weak self] in
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.2
-                self?.gazeGlowView?.animator().alphaValue = 0.0
-            }, completionHandler: { [weak self] in
-                self?.gazeGlowWindow?.orderOut(nil)
-                self?.gazeGlowView?.alphaValue = 1.0  // Reset for next use
-                self?.isWinkAnimating = false  // Allow gaze updates again
-            })
-        })
+        // Use CATransaction for completion of fade-out, then start white animation
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self = self else { return }
+
+            // Remove fade-out animation
+            view.layer?.removeAnimation(forKey: "fadeOut")
+
+            // Phase 2: Switch to white
+            view.updateGlow(color: .white, direction: view.currentDirection, intensity: 1.0, maxOpacity: 1.0)
+
+            if isCalibrationMode {
+                // CALIBRATION MODE: Fade in white and STAY visible
+                // Will fade out when user returns to neutral (handleReturnToNeutral)
+                let fadeInAnimation = CAKeyframeAnimation(keyPath: "opacity")
+                fadeInAnimation.duration = 0.3
+
+                var fadeInValues: [CGFloat] = []
+                let fadeInSteps = 15
+                for i in 0...fadeInSteps {
+                    let t = CGFloat(i) / CGFloat(fadeInSteps)
+                    let sineValue = sin(t * .pi / 2)  // 0 -> 1
+                    fadeInValues.append(sineValue)
+                }
+                fadeInAnimation.values = fadeInValues
+                fadeInAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
+                fadeInAnimation.fillMode = .forwards
+                fadeInAnimation.isRemovedOnCompletion = false
+
+                CATransaction.begin()
+                CATransaction.setCompletionBlock {
+                    view.layer?.removeAnimation(forKey: "fadeIn")
+                    view.alphaValue = 1.0  // Keep white visible
+                }
+                view.layer?.add(fadeInAnimation, forKey: "fadeIn")
+                CATransaction.commit()
+            } else {
+                // NORMAL MODE: Full pulse animation (fade in, then fade out)
+                let pulseAnimation = CAKeyframeAnimation(keyPath: "opacity")
+                pulseAnimation.duration = 0.6
+
+                // Generate sine wave values (0 -> 1 -> 0)
+                var pulseValues: [CGFloat] = []
+                let pulseSteps = 30
+                for i in 0...pulseSteps {
+                    let t = CGFloat(i) / CGFloat(pulseSteps)
+                    let sineValue = sin(t * .pi)  // 0 -> 1 -> 0
+                    pulseValues.append(sineValue)
+                }
+                pulseAnimation.values = pulseValues
+                pulseAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
+                pulseAnimation.fillMode = .forwards
+                pulseAnimation.isRemovedOnCompletion = false
+
+                CATransaction.begin()
+                CATransaction.setCompletionBlock { [weak self] in
+                    window.orderOut(nil)
+                    view.layer?.removeAnimation(forKey: "pulse")
+                    view.alphaValue = 1.0
+                    // IMPORTANT: Reset the glow color to transparent to prevent white flash on next show
+                    view.updateGlow(color: .clear, direction: view.currentDirection, intensity: 0, maxOpacity: 0)
+                    self?.activeWinkEdge = .none
+                    self?.isWinkAnimating = false
+                }
+                view.layer?.add(pulseAnimation, forKey: "pulse")
+                CATransaction.commit()
+            }
+        }
+
+        view.layer?.add(fadeOutAnimation, forKey: "fadeOut")
+        CATransaction.commit()
+    }
+
+    /// Called when user returns to neutral position after a trigger
+    private func handleReturnToNeutral() {
+        guard activeWinkEdge != .none else { return }
+
+        // Get the window and view for the active edge
+        let glowWindow: NSWindow?
+        let glowView: GradientGlowView?
+
+        switch activeWinkEdge {
+        case .top:
+            glowWindow = topGlowWindow
+            glowView = topGlowView
+        case .left:
+            glowWindow = leftGlowWindow
+            glowView = leftGlowView
+        case .right:
+            glowWindow = rightGlowWindow
+            glowView = rightGlowView
+        case .none:
+            return
+        }
+
+        guard let view = glowView, let window = glowWindow else {
+            activeWinkEdge = .none
+            isWinkAnimating = false
+            return
+        }
+
+        // Check if we're in calibration mode for cooldown
+        let isCalibrationMode = appState.headPoseDetector.isCalibrationActive
+
+        // Fade out the white glow
+        let fadeOutAnimation = CAKeyframeAnimation(keyPath: "opacity")
+        fadeOutAnimation.duration = 0.3
+
+        // Generate sine-based fade out (1 -> 0)
+        var fadeOutValues: [CGFloat] = []
+        let fadeOutSteps = 15
+        for i in 0...fadeOutSteps {
+            let t = CGFloat(i) / CGFloat(fadeOutSteps)
+            let sineValue = cos(t * .pi / 2)  // 1 -> 0
+            fadeOutValues.append(sineValue)
+        }
+        fadeOutAnimation.values = fadeOutValues
+        fadeOutAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
+        fadeOutAnimation.fillMode = .forwards
+        fadeOutAnimation.isRemovedOnCompletion = false
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self = self else { return }
+
+            window.orderOut(nil)
+            view.layer?.removeAnimation(forKey: "fadeOutWhite")
+            view.alphaValue = 1.0
+
+            // IMPORTANT: Reset the glow color to transparent to prevent white flash on next show
+            view.updateGlow(color: .clear, direction: view.currentDirection, intensity: 0, maxOpacity: 0)
+
+            // Reset state
+            self.activeWinkEdge = .none
+
+            // Hide all glow windows and reset smoothed intensities to prevent stale state
+            self.hideAllGlowWindows()
+            self.smoothedTopIntensity = 0
+            self.smoothedLeftIntensity = 0
+            self.smoothedRightIntensity = 0
+
+            if isCalibrationMode {
+                // In calibration mode, add 2 second cooldown before allowing new highlights
+                // Set cooldown on both AppDelegate (for glow updates) and HeadPoseDetector (for triggers)
+                self.isInCooldown = true
+                self.appState.headPoseDetector.isInCooldown = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    guard let self = self else { return }
+                    self.isInCooldown = false
+                    self.appState.headPoseDetector.isInCooldown = false
+                    self.isWinkAnimating = false
+                    // Reset smoothed intensities again to ensure clean start
+                    self.smoothedTopIntensity = 0
+                    self.smoothedLeftIntensity = 0
+                    self.smoothedRightIntensity = 0
+                    // Don't reset baseline - keep original centerpoint for entire session
+                    // User must return to within frustum to trigger again (handled by requiresReturnToNeutral)
+                }
+            } else {
+                // In normal mode, no more highlights until next chime
+                self.isWinkAnimating = false
+            }
+        }
+
+        view.layer?.add(fadeOutAnimation, forKey: "fadeOutWhite")
+        CATransaction.commit()
+    }
+
+    private func ensureGlowWindowExists(for edge: GazeEdge) {
+        guard let screen = NSScreen.main else { return }
+        let screenFrame = screen.frame
+        let glowDepth: CGFloat = 300  // Larger to accommodate 2x bulge
+
+        let windowFrame: NSRect
+        let color: NSColor
+        let direction: GradientGlowView.GradientDirection
+
+        switch edge {
+        case .top:
+            if topGlowWindow != nil { return }
+            windowFrame = NSRect(x: screenFrame.minX, y: screenFrame.maxY - glowDepth,
+                                 width: screenFrame.width, height: glowDepth)
+            color = .systemGreen
+            direction = .fromTop
+            createGlowWindow(frame: windowFrame, color: color, direction: direction,
+                           window: &topGlowWindow, view: &topGlowView)
+        case .left:
+            if leftGlowWindow != nil { return }
+            windowFrame = NSRect(x: screenFrame.minX, y: screenFrame.minY,
+                                 width: glowDepth, height: screenFrame.height)
+            color = .systemOrange
+            direction = .fromLeft
+            createGlowWindow(frame: windowFrame, color: color, direction: direction,
+                           window: &leftGlowWindow, view: &leftGlowView)
+        case .right:
+            if rightGlowWindow != nil { return }
+            windowFrame = NSRect(x: screenFrame.maxX - glowDepth, y: screenFrame.minY,
+                                 width: glowDepth, height: screenFrame.height)
+            color = .systemOrange
+            direction = .fromRight
+            createGlowWindow(frame: windowFrame, color: color, direction: direction,
+                           window: &rightGlowWindow, view: &rightGlowView)
+        case .none:
+            return
+        }
+    }
+
+    private func createGlowWindow(
+        frame: NSRect,
+        color: NSColor,
+        direction: GradientGlowView.GradientDirection,
+        window: inout NSWindow?,
+        view: inout GradientGlowView?
+    ) {
+        let newWindow = NSWindow(
+            contentRect: frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        newWindow.isOpaque = false
+        newWindow.backgroundColor = .clear
+        newWindow.level = .screenSaver
+        newWindow.ignoresMouseEvents = true
+        newWindow.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        newWindow.hasShadow = false
+
+        let glowView = GradientGlowView(frame: NSRect(origin: .zero, size: frame.size))
+        glowView.updateGlow(color: color, direction: direction, intensity: 0)
+        newWindow.contentView = glowView
+        window = newWindow
+        view = glowView
+    }
+
+    /// Public method for calibration view to show glow feedback
+    func showCalibrationGlow(for pose: HeadPose) {
+        // Check if glow is enabled
+        if !screenGlowEnabled { return }
+
+        let edge: GazeEdge
+        switch pose {
+        case .tiltUp:
+            edge = .top
+        case .turnLeftRight:
+            // Use current gaze edge from detector to know direction
+            edge = currentGazeEdge == .none ? .left : currentGazeEdge
+        case .neutral:
+            return
+        }
+
+        // Ensure window is set up for this edge first (bypass smoothing for instant feedback)
+        updateEdgeGlow(edge: edge, rawIntensity: 1.0)
+
+        // Then perform the wink animation
+        performWinkAnimation(for: edge)
     }
 
     private func showScreenGlow(for type: ResponseType) {
@@ -389,64 +782,221 @@ class GradientGlowView: NSView {
         case fromRight
     }
 
-    private var gradientLayer: CAGradientLayer?
+    private var shapeLayer: CAShapeLayer?
     private var glowColor: NSColor = .systemGreen
     private(set) var currentDirection: GradientDirection = .fromTop
     private var intensity: CGFloat = 0
+    private var bulgePosition: CGFloat = 0.5  // 0-1, position along the edge
+    private var bulgeAmount: CGFloat = 0      // 0-1, how much the bulge extends
+    private var maxOpacity: CGFloat = 0.5     // User-configurable max opacity
+
+    // Blur radius for gradient effect
+    private let blurRadius: CGFloat = 50
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        setupGradientLayer()
+        layer?.masksToBounds = false
+        setupLayers()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         wantsLayer = true
-        setupGradientLayer()
+        layer?.masksToBounds = false
+        setupLayers()
     }
 
-    private func setupGradientLayer() {
-        let gradient = CAGradientLayer()
-        gradient.frame = bounds
-        layer?.addSublayer(gradient)
-        gradientLayer = gradient
+    private func setupLayers() {
+        let shape = CAShapeLayer()
+        shape.frame = bounds
+        layer?.addSublayer(shape)
+        shapeLayer = shape
     }
 
     override func layout() {
         super.layout()
-        gradientLayer?.frame = bounds
-        updateGradient()
+        shapeLayer?.frame = bounds
+        updateGlow()
     }
 
-    func updateGlow(color: NSColor, direction: GradientDirection, intensity: CGFloat) {
+    func updateGlow(color: NSColor, direction: GradientDirection, intensity: CGFloat, bulgePosition: CGFloat = 0.5, bulgeAmount: CGFloat = 0, maxOpacity: CGFloat = 0.5) {
         self.glowColor = color
         self.currentDirection = direction
         self.intensity = intensity
-        updateGradient()
+        self.bulgePosition = bulgePosition
+        self.bulgeAmount = bulgeAmount
+        self.maxOpacity = maxOpacity
+        updateGlow()
     }
 
-    private func updateGradient() {
-        guard let gradient = gradientLayer else { return }
+    private func updateGlow() {
+        guard let shape = shapeLayer else { return }
 
-        // Apply intensity to alpha (0 at center of frustum, 1 at threshold)
-        let alpha = intensity * 0.8  // Max 80% opacity at full intensity
-        let opaqueColor = glowColor.withAlphaComponent(alpha).cgColor
-        let transparentColor = glowColor.withAlphaComponent(0).cgColor
+        // Create the shape path - extends beyond screen edge so blur center is at edge
+        let path = createBulgePath()
+        shape.path = path.compatibleCGPath
 
-        gradient.colors = [opaqueColor, transparentColor]
+        // Fill with solid color - use user-configurable max opacity
+        let alpha = intensity * maxOpacity
+        shape.fillColor = glowColor.withAlphaComponent(alpha).cgColor
 
-        // Set gradient direction based on edge
+        // Apply Gaussian blur for smooth gradient effect
+        if let blurFilter = CIFilter(name: "CIGaussianBlur") {
+            blurFilter.setValue(blurRadius, forKey: kCIInputRadiusKey)
+            shape.filters = [blurFilter]
+        }
+    }
+
+    private func createBulgePath() -> NSBezierPath {
+        let path = NSBezierPath()
+        let w = bounds.width
+        let h = bounds.height
+
+        // Base depth of the glow (from screen edge inward)
+        let visibleDepth: CGFloat = 80
+
+        // Bulge parameters
+        // Bulge is centered at the SCREEN EDGE and extends inward
+        // Radius scales dramatically with gaze proximity: 0 when not looking, 150 at full intensity
+        let bulgeRadius: CGFloat = 150 * bulgeAmount
+
         switch currentDirection {
         case .fromTop:
-            gradient.startPoint = CGPoint(x: 0.5, y: 1.0)  // Top
-            gradient.endPoint = CGPoint(x: 0.5, y: 0.0)    // Bottom (into screen)
+            // Top edge glow
+            let bulgeX = w * bulgePosition
+            let screenEdgeY = h  // The actual screen edge
+            let outerY = h + blurRadius  // Extend above screen for blur
+            let innerY = h - visibleDepth  // Base inner edge
+
+            path.move(to: NSPoint(x: 0, y: outerY))
+            path.line(to: NSPoint(x: w, y: outerY))
+
+            // Right side down to inner edge
+            path.line(to: NSPoint(x: w, y: innerY))
+
+            // Inner edge with bulge centered at SCREEN EDGE
+            if bulgeRadius > 1 {
+                let bulgeStartX = min(w, bulgeX + bulgeRadius)
+
+                path.line(to: NSPoint(x: bulgeStartX, y: innerY))
+                // Arc bulging DOWNWARD (into screen) - centered at screen edge
+                path.appendArc(
+                    withCenter: NSPoint(x: bulgeX, y: screenEdgeY),
+                    radius: bulgeRadius,
+                    startAngle: 0,
+                    endAngle: 180,
+                    clockwise: true  // Clockwise makes it bulge down
+                )
+                path.line(to: NSPoint(x: 0, y: innerY))
+            } else {
+                path.line(to: NSPoint(x: 0, y: innerY))
+            }
+
+            path.close()
+
         case .fromLeft:
-            gradient.startPoint = CGPoint(x: 0.0, y: 0.5)  // Left edge
-            gradient.endPoint = CGPoint(x: 1.0, y: 0.5)    // Right (into screen)
+            // Left edge glow
+            let bulgeY = h * bulgePosition
+            let screenEdgeX: CGFloat = 0  // The actual screen edge
+            let outerX: CGFloat = -blurRadius  // Extend left of screen for blur
+            let innerX = visibleDepth  // Base inner edge
+
+            path.move(to: NSPoint(x: outerX, y: 0))
+            path.line(to: NSPoint(x: outerX, y: h))
+
+            // Top down to inner edge
+            path.line(to: NSPoint(x: innerX, y: h))
+
+            // Inner edge with bulge centered at SCREEN EDGE
+            if bulgeRadius > 1 {
+                let bulgeStartY = min(h, bulgeY + bulgeRadius)
+
+                path.line(to: NSPoint(x: innerX, y: bulgeStartY))
+                // Arc bulging RIGHTWARD (into screen) - centered at screen edge
+                path.appendArc(
+                    withCenter: NSPoint(x: screenEdgeX, y: bulgeY),
+                    radius: bulgeRadius,
+                    startAngle: 90,
+                    endAngle: -90,
+                    clockwise: true  // Clockwise makes it bulge right
+                )
+                path.line(to: NSPoint(x: innerX, y: 0))
+            } else {
+                path.line(to: NSPoint(x: innerX, y: 0))
+            }
+
+            path.close()
+
         case .fromRight:
-            gradient.startPoint = CGPoint(x: 1.0, y: 0.5)  // Right edge
-            gradient.endPoint = CGPoint(x: 0.0, y: 0.5)    // Left (into screen)
+            // Right edge glow
+            let bulgeY = h * bulgePosition
+            let screenEdgeX = w  // The actual screen edge
+            let outerX = w + blurRadius  // Extend right of screen for blur
+            let innerX = w - visibleDepth  // Base inner edge
+
+            path.move(to: NSPoint(x: outerX, y: 0))
+            path.line(to: NSPoint(x: outerX, y: h))
+
+            // Top down to inner edge
+            path.line(to: NSPoint(x: innerX, y: h))
+
+            // Inner edge with bulge centered at SCREEN EDGE
+            if bulgeRadius > 1 {
+                let bulgeStartY = min(h, bulgeY + bulgeRadius)
+
+                path.line(to: NSPoint(x: innerX, y: bulgeStartY))
+                // Arc bulging LEFTWARD (into screen) - centered at screen edge
+                path.appendArc(
+                    withCenter: NSPoint(x: screenEdgeX, y: bulgeY),
+                    radius: bulgeRadius,
+                    startAngle: 90,
+                    endAngle: -90,
+                    clockwise: false  // Counter-clockwise makes it bulge left
+                )
+                path.line(to: NSPoint(x: innerX, y: 0))
+            } else {
+                path.line(to: NSPoint(x: innerX, y: 0))
+            }
+
+            path.close()
+        }
+
+        return path
+    }
+}
+
+// MARK: - NSBezierPath Extension for CGPath
+
+extension NSBezierPath {
+    /// Returns a CGPath for this bezier path (compatibility for macOS < 14)
+    var compatibleCGPath: CGPath {
+        if #available(macOS 14.0, *) {
+            return self.cgPath
+        } else {
+            let path = CGMutablePath()
+            var points = [CGPoint](repeating: .zero, count: 3)
+
+            for i in 0..<self.elementCount {
+                let type = self.element(at: i, associatedPoints: &points)
+                switch type {
+                case .moveTo:
+                    path.move(to: points[0])
+                case .lineTo:
+                    path.addLine(to: points[0])
+                case .curveTo:
+                    path.addCurve(to: points[2], control1: points[0], control2: points[1])
+                case .closePath:
+                    path.closeSubpath()
+                case .cubicCurveTo:
+                    path.addCurve(to: points[2], control1: points[0], control2: points[1])
+                case .quadraticCurveTo:
+                    path.addQuadCurve(to: points[1], control: points[0])
+                @unknown default:
+                    break
+                }
+            }
+            return path
         }
     }
 }

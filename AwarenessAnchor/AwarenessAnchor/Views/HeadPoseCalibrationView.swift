@@ -16,8 +16,8 @@ struct HeadPoseCalibrationView: View {
     // Threshold bindings
     @State private var pitchThreshold: Float = 0.12
     @State private var yawThreshold: Float = 0.20
-    @State private var smoothingFactor: Float = 0.3
-    @State private var dwellTime: Float = 0.15
+    @State private var smoothingFactor: Float = 0.5
+    @State private var dwellTime: Float = 0.2
 
     var body: some View {
         ScrollView {
@@ -36,18 +36,24 @@ struct HeadPoseCalibrationView: View {
                             signedYawDelta: signedYawDelta,
                             dwellProgress: detector.dwellProgress,
                             isTestActive: isTestActive,
-                            faceDetected: detector.faceDetected
+                            faceDetected: detector.faceDetected,
+                            isInCooldown: detector.isInCooldown
                         )
-                        .frame(width: 280, height: 280)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 230)
                         .cornerRadius(12)
 
-                        // Triggered feedback banner at top
-                        if showTriggeredFeedback, let pose = triggeredPose {
+                        // Triggered feedback banner at top (or Initializing during cooldown)
+                        if detector.isInCooldown {
+                            InitializingBanner()
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        } else if showTriggeredFeedback, let pose = triggeredPose {
                             TriggeredBanner(pose: pose)
                                 .transition(.move(edge: .top).combined(with: .opacity))
                         }
                     }
-                    .frame(width: 280, height: 280)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 230)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(Color(NSColor.separatorColor), lineWidth: 1)
@@ -75,18 +81,19 @@ struct HeadPoseCalibrationView: View {
                                 }
                             }
                         } else {
-                            Text("Click 'Start Test' to fix the threshold frustum")
+                            Text("Look at the center of your workspace. Click 'Preview'")
                                 .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
                         }
                     }
                     .font(.caption)
                 }
 
-                // Test Button
+                // Preview Button
                 Button(action: toggleTest) {
                     HStack {
                         Image(systemName: isTestActive ? "stop.circle.fill" : "play.circle.fill")
-                        Text(isTestActive ? "Stop Test" : "Start Test")
+                        Text(isTestActive ? "Stop Preview" : "Preview")
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
@@ -136,7 +143,7 @@ struct HeadPoseCalibrationView: View {
                         color: .blue,
                         label: "Smoothing",
                         value: $smoothingFactor,
-                        range: 0.0...0.7,
+                        range: 0.0...1.0,
                         hint: "Higher = smoother but laggier tracking",
                         onChanged: { detector.smoothingFactor = $0 }
                     )
@@ -146,19 +153,12 @@ struct HeadPoseCalibrationView: View {
                         color: .purple,
                         label: "Dwell Time",
                         value: $dwellTime,
-                        range: 0.0...2.0,
-                        hint: "\(String(format: "%.1fs", dwellTime)) - how long to hold outside threshold",
+                        range: 0.0...0.5,
+                        hint: "\(String(format: "%.2fs", dwellTime)) - how long to hold outside threshold",
                         onChanged: { detector.dwellTime = $0 }
                     )
                 }
 
-                Divider()
-
-                // Legend
-                HStack(spacing: 16) {
-                    LegendItem(color: .green, text: "Tilt Up = Already Present")
-                    LegendItem(color: .orange, text: "Turn = Returned to Awareness")
-                }
             }
             .padding(24)
         }
@@ -178,6 +178,9 @@ struct HeadPoseCalibrationView: View {
                     triggeredPose = pose
                     showTriggeredFeedback = true
                 }
+
+                // Trigger screen glow for calibration feedback
+                AppDelegate.shared?.showCalibrationGlow(for: pose)
 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     withAnimation {
@@ -231,6 +234,26 @@ struct TriggeredBanner: View {
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(pose == .tiltUp ? Color.green : Color.orange)
+        )
+        .padding(.top, 8)
+    }
+}
+
+// MARK: - Initializing Banner
+
+struct InitializingBanner: View {
+    var body: some View {
+        HStack {
+            Image(systemName: "hourglass")
+            Text("Initializing...")
+                .fontWeight(.semibold)
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.gray)
         )
         .padding(.top, 8)
     }

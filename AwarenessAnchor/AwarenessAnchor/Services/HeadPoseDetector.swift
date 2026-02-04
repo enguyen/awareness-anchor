@@ -36,11 +36,28 @@ class HeadPoseDetector: NSObject, ObservableObject {
     @Published var currentGazeEdge: GazeEdge = .none
     @Published var gazeIntensity: Float = 0  // 0 to 1, how close to threshold
 
+    // Separate intensities for multi-directional glow (0 to 1 each)
+    @Published var topIntensity: Float = 0
+    @Published var leftIntensity: Float = 0
+    @Published var rightIntensity: Float = 0
+
+    // Normalized gaze position for bulge effect (0-1 range)
+    // yawPosition: 0 = full left, 0.5 = center, 1 = full right
+    // pitchPosition: 0 = full down, 0.5 = center, 1 = full up
+    @Published var normalizedYawPosition: Float = 0.5
+    @Published var normalizedPitchPosition: Float = 0.5
+
     // Calibration state - observable by UI
     @Published var isCalibrationActive: Bool = false
 
     // Callback for when a trigger happens (for wink animation)
     var onGazeTrigger: ((GazeEdge) -> Void)?
+
+    // Callback for when user returns to neutral after a trigger
+    var onReturnToNeutral: (() -> Void)?
+
+    // Published state for UI to know when we're waiting for return
+    @Published var isAwaitingReturnToNeutral: Bool = false
 
     // Track if face was ever detected during this response window
     private(set) var faceWasDetectedThisWindow: Bool = false
@@ -70,13 +87,13 @@ class HeadPoseDetector: NSObject, ObservableObject {
     // Smoothing factor for IIR filter (0 = no smoothing, 1 = infinite smoothing)
     // Lower value = more responsive but jittery, higher = smoother but laggy
     var smoothingFactor: Float {
-        get { Float(UserDefaults.standard.double(forKey: "smoothingFactor").nonZeroOr(0.3)) }
+        get { Float(UserDefaults.standard.double(forKey: "smoothingFactor").nonZeroOr(0.5)) }
         set { UserDefaults.standard.set(Double(newValue), forKey: "smoothingFactor") }
     }
 
     // Dwell time: how long (seconds) gaze must stay outside threshold before triggering
     var dwellTime: Float {
-        get { Float(UserDefaults.standard.double(forKey: "dwellTime").nonZeroOr(0.15)) }
+        get { Float(UserDefaults.standard.double(forKey: "dwellTime").nonZeroOr(0.2)) }
         set { UserDefaults.standard.set(Double(newValue), forKey: "dwellTime") }
     }
 
@@ -97,6 +114,9 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
     // Prevent re-triggering until user returns to neutral
     private var requiresReturnToNeutral: Bool = false
+
+    // External cooldown flag - set by AppDelegate to prevent triggers during cooldown period
+    @Published var isInCooldown: Bool = false
 
     func startDetection() {
         guard captureSession == nil else { return }
@@ -157,6 +177,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
             self.debugBaseline = "Calibrating..."
             self.faceDetected = false
             self.dwellProgress = 0
+            self.isAwaitingReturnToNeutral = false
         }
 
         // Start camera
@@ -172,9 +193,13 @@ class HeadPoseDetector: NSObject, ObservableObject {
         // Stop camera to save resources
         captureSession?.stopRunning()
 
-        // Reset gaze edge
+        // Reset gaze edge and intensities
         DispatchQueue.main.async {
             self.currentGazeEdge = .none
+            self.gazeIntensity = 0
+            self.topIntensity = 0
+            self.leftIntensity = 0
+            self.rightIntensity = 0
         }
     }
 
@@ -208,6 +233,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
             self.debugBaseline = "Waiting for baseline..."
             self.faceDetected = false
             self.dwellProgress = 0
+            self.isAwaitingReturnToNeutral = false
         }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -226,7 +252,12 @@ class HeadPoseDetector: NSObject, ObservableObject {
             self.isCalibrationActive = false
             self.currentGazeEdge = .none
             self.gazeIntensity = 0
+            self.topIntensity = 0
+            self.leftIntensity = 0
+            self.rightIntensity = 0
             self.dwellProgress = 0
+            self.isAwaitingReturnToNeutral = false
+            self.isInCooldown = false
         }
     }
 
@@ -351,7 +382,28 @@ class HeadPoseDetector: NSObject, ObservableObject {
             let yawIntensity = min(abs(signedYawDelta) / yawThresh, 1.0)
             let pitchIntensity = min(abs(pitchDelta) / pitchThresh, 1.0)
 
-            // Determine edge based on which direction has highest intensity
+            // Update separate intensities for multi-directional glow
+            // Top: only when tilting up (negative pitch delta)
+            self.topIntensity = pitchDelta < -0.02 ? pitchIntensity : 0
+
+            // Left: positive yaw = looking left (camera mirror)
+            self.leftIntensity = signedYawDelta > 0.02 ? yawIntensity : 0
+
+            // Right: negative yaw = looking right (camera mirror)
+            self.rightIntensity = signedYawDelta < -0.02 ? yawIntensity : 0
+
+            // Update normalized gaze position for bulge effect
+            // Yaw: positive yaw = looking left, map to screen X position
+            let normalizedYaw = min(max(signedYawDelta / yawThresh, -1.0), 1.0)
+            // When looking left (+yaw), bulge should be on left side (low X), so invert
+            self.normalizedYawPosition = (1.0 - normalizedYaw) / 2.0  // Range: 0 (looking right) to 1 (looking left)
+
+            // Pitch: negative pitch = looking up, map to screen Y position
+            let normalizedPitch = min(max(pitchDelta / pitchThresh, -1.0), 1.0)
+            // When looking up (-pitch), bulge should be at top (high Y), so invert the negative
+            self.normalizedPitchPosition = (1.0 - normalizedPitch) / 2.0  // Range: 0 (looking down) to 1 (looking up)
+
+            // Determine primary edge based on which direction has highest intensity (for legacy compatibility)
             // Swap left/right: positive yaw = looking left, negative = looking right (camera mirror)
             if signedYawDelta > 0.02 && yawIntensity > pitchIntensity {
                 self.currentGazeEdge = .left  // Positive yaw = left
@@ -406,8 +458,8 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
         // Dwell time tracking
         if detectedPose != .neutral {
-            // Don't start new dwell if we're waiting for return to neutral
-            if requiresReturnToNeutral {
+            // Don't start new dwell if we're waiting for return to neutral or in cooldown
+            if requiresReturnToNeutral || isInCooldown {
                 return
             }
 
@@ -440,6 +492,9 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
                     // Require return to neutral before next trigger
                     requiresReturnToNeutral = true
+                    DispatchQueue.main.async {
+                        self.isAwaitingReturnToNeutral = true
+                    }
 
                     if isCalibrationMode {
                         // Don't set hasRespondedThisWindow in calibration mode
@@ -472,12 +527,20 @@ class HeadPoseDetector: NSObject, ObservableObject {
             }
         } else {
             // Back to neutral, reset dwell tracking and allow new triggers
-            if dwellStartTime != nil || currentDwellPose != .neutral || requiresReturnToNeutral {
+            if dwellStartTime != nil || currentDwellPose != .neutral {
                 dwellStartTime = nil
                 currentDwellPose = .neutral
-                requiresReturnToNeutral = false  // Can trigger again after returning to neutral
                 DispatchQueue.main.async {
                     self.dwellProgress = 0
+                }
+            }
+
+            // Fire callback when returning to neutral after a trigger
+            if requiresReturnToNeutral {
+                requiresReturnToNeutral = false
+                DispatchQueue.main.async {
+                    self.isAwaitingReturnToNeutral = false
+                    self.onReturnToNeutral?()
                 }
             }
         }

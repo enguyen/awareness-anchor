@@ -79,6 +79,8 @@ struct SettingsSection<Content: View>: View {
 struct GeneralSettingsView: View {
     @Binding var headPoseEnabled: Bool
     @Binding var launchAtLogin: Bool
+    @AppStorage("screenGlowEnabled") private var screenGlowEnabled = true
+    @AppStorage("screenGlowOpacity") private var screenGlowOpacity = 0.5
 
     var body: some View {
         ScrollView {
@@ -139,6 +141,34 @@ struct GeneralSettingsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
+                }
+
+                Divider()
+
+                // Visual Feedback
+                SettingsSection(title: "Visual Feedback") {
+                    Toggle("Show screen edge glow", isOn: $screenGlowEnabled)
+                        .toggleStyle(.switch)
+
+                    if screenGlowEnabled {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Glow opacity")
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text("\(Int(screenGlowOpacity * 100))%")
+                                    .fontWeight(.medium)
+                                    .monospacedDigit()
+                            }
+
+                            Slider(value: $screenGlowOpacity, in: 0.1...1.0)
+                                .tint(.orange)
+                        }
+                    }
+
+                    Text("Displays a colored glow on screen edges when tracking head movement and registering responses.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
 
                 Divider()

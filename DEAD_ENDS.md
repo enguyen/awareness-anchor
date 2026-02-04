@@ -139,3 +139,59 @@ Common themes in these dead ends:
 3. **Visual parameters have hidden effects** - `step:` does more than just value snapping
 
 When hitting similar situations, pivot after 15 minutes per the project's development patterns.
+
+---
+
+## Dead End #4: SQLite + Swift String Binding with SQLITE_STATIC
+
+### What We Tried
+Used `sqlite3_bind_text` with `nil` (which defaults to SQLITE_STATIC) to bind Swift String values to SQLite prepared statements:
+
+```swift
+sqlite3_bind_text(statement, 1, stringValue, -1, nil)
+```
+
+### Why It Failed
+Swift Strings are temporary objects. When passed to C functions, they're often bridged as temporary pointers. With `SQLITE_STATIC`, SQLite assumes the string memory stays valid until query execution - but Swift may deallocate or move the string before then.
+
+Result: Empty string columns in the database despite the Swift code showing correct values in debugger.
+
+### What We Learned
+- `SQLITE_STATIC` tells SQLite "I guarantee this memory stays valid"
+- `SQLITE_TRANSIENT` tells SQLite "copy this immediately, I can't guarantee memory"
+- Swift String bridging to C creates temporary memory that's immediately invalid
+- This is a silent data corruption bug - no errors, just empty/wrong values
+
+### Detection Method
+Query the database directly with sqlite3 CLI:
+```bash
+sqlite3 ~/Library/Application\ Support/AwarenessAnchor/*.db "SELECT * FROM chime_events;"
+```
+
+If code looks correct but CLI shows empty strings, suspect string binding.
+
+### Time Spent
+- Total: ~90 minutes
+- Debugging "why isn't data showing in stats": ~60 minutes
+- Realizing it was a binding issue, not query issue: ~30 minutes
+
+### When to Try SQLITE_STATIC
+- When binding static C strings (`"literal"`)
+- When you've explicitly managed memory lifetime
+
+### When to Avoid SQLITE_STATIC (use SQLITE_TRANSIENT)
+- Swift Strings (always)
+- Any dynamically allocated strings
+- When in doubt
+
+### Alternative That Worked
+```swift
+sqlite3_bind_text(statement, 1, stringValue, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+// The -1 cast is SQLITE_TRANSIENT, which tells SQLite to copy the string
+```
+
+Or use a helper constant:
+```swift
+let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+sqlite3_bind_text(statement, 1, stringValue, -1, SQLITE_TRANSIENT)
+```
