@@ -7,9 +7,9 @@ Originally a web application, now available as a native macOS menu bar app.
 ## Screenshots
 
 <p align="center">
-  <img src="images/menu-bar-ui.png" alt="Menu Bar Interface" width="300"/>
-  <img src="images/statistics-ui.png" alt="Statistics Dashboard" width="300"/>
-  <img src="images/calibration-ui.png" alt="Head Pose Calibration" width="300"/>
+  <img src="images/menu-bar-ui.png" alt="Menu Bar Interface" width="280"/>
+  <img src="images/statistics-ui.png" alt="Statistics Dashboard" width="280"/>
+  <img src="images/calibration-ui.png" alt="Head Pose Calibration" width="280"/>
 </p>
 
 ### Head Pose Calibration Demo
