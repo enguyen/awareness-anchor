@@ -4,6 +4,19 @@ A mindfulness bell app for macOS that plays random chimes throughout your day, p
 
 Originally a web application, now available as a native macOS menu bar app.
 
+## Screenshots
+
+<p align="center">
+  <img src="images/statistics-ui.png" alt="Statistics Dashboard" width="300"/>
+  <img src="images/calibration-ui.png" alt="Head Pose Calibration" width="300"/>
+</p>
+
+### Head Pose Calibration Demo
+
+![Calibration Demo](images/calibration-demo.gif)
+
+*The calibration view shows real-time head tracking with visual feedback. Screen edge glows indicate gaze direction, and responses are triggered when the gaze exits the threshold frustum.*
+
 ## Features
 
 - **Random Interval Chimes**: Plays Tibetan singing bowl sounds at random intervals based on your configured average interval (3 seconds to 5 minutes)
