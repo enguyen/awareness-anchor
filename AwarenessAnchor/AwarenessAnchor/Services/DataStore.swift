@@ -356,3 +356,154 @@ struct StatsData {
         return Double(presentCount) / Double(responded)
     }
 }
+
+// MARK: - Time-in-State Estimation
+
+struct TimeEstimateStats {
+    let pointEstimate: Double              // π̂ = present / (present + returned + missed)
+    let confidenceInterval: (low: Double, high: Double)  // 95% CI
+    let effectiveSampleSize: Double        // n_eff
+    let rawSampleSize: Int                 // n
+    let autocorrelation: Double            // ρ (estimated from data)
+    let totalPracticeTime: TimeInterval    // Sum of session durations
+
+    /// Returns true if we have enough samples for meaningful statistics
+    var hasEnoughData: Bool {
+        rawSampleSize >= 3
+    }
+
+    /// Returns the CI width as a percentage (for display)
+    var ciWidth: Double {
+        (confidenceInterval.high - confidenceInterval.low) * 100
+    }
+}
+
+extension DataStore {
+
+    // MARK: - Time Estimate Statistics
+
+    func getTimeEstimateStats(for period: StatsPeriod) -> TimeEstimateStats {
+        let (startDate, endDate) = period.dateRange
+        let events = getEvents(from: startDate, to: endDate)
+
+        // Sort events by timestamp (chronological order for autocorrelation)
+        let sortedEvents = events.sorted { $0.timestamp < $1.timestamp }
+
+        let presentCount = sortedEvents.filter { $0.responseType == .present }.count
+        let returnedCount = sortedEvents.filter { $0.responseType == .returned }.count
+        let missedCount = sortedEvents.filter { $0.responseType == .missed }.count
+        let n = presentCount + returnedCount + missedCount
+
+        // Point estimate: proportion of time in Present state
+        // "Present" response means user was aware; "Returned"/"Missed" mean they were absent
+        let pointEstimate: Double = n > 0 ? Double(presentCount) / Double(n) : 0
+
+        // Estimate autocorrelation from the sequence of observations
+        let rho = estimateAutocorrelation(events: sortedEvents)
+
+        // Effective sample size accounting for autocorrelation
+        // n_eff = n × (1 - ρ) / (1 + ρ)
+        let effectiveN: Double
+        if rho >= 1.0 {
+            effectiveN = 1.0  // Prevent division by zero / negative
+        } else if rho <= -1.0 {
+            effectiveN = Double(n)  // Negative autocorrelation doesn't reduce effective n
+        } else {
+            effectiveN = max(1.0, Double(n) * (1 - rho) / (1 + rho))
+        }
+
+        // Wilson score confidence interval with effective sample size
+        let ci = wilsonConfidenceInterval(successes: presentCount, trials: n, effectiveN: effectiveN)
+
+        // Total practice time
+        let practiceTime = getTotalPracticeTime(for: period)
+
+        return TimeEstimateStats(
+            pointEstimate: pointEstimate,
+            confidenceInterval: ci,
+            effectiveSampleSize: effectiveN,
+            rawSampleSize: n,
+            autocorrelation: rho,
+            totalPracticeTime: practiceTime
+        )
+    }
+
+    /// Estimate lag-1 autocorrelation from a sequence of chime events
+    /// Binary encoding: Present=1, Absent (Returned OR Missed)=0
+    func estimateAutocorrelation(events: [ChimeEvent]) -> Double {
+        guard events.count >= 3 else { return 0.0 }
+
+        // Binary encode: Present=1, Absent=0
+        let binary: [Double] = events.map { $0.responseType == .present ? 1.0 : 0.0 }
+        let n = binary.count
+
+        // Mean
+        let mean = binary.reduce(0, +) / Double(n)
+
+        // Variance (sample variance)
+        let variance = binary.map { pow($0 - mean, 2) }.reduce(0, +) / Double(n - 1)
+
+        // If variance is zero (all same response), autocorrelation is undefined
+        guard variance > 0 else { return 0.0 }
+
+        // Lag-1 autocovariance
+        var autocovariance = 0.0
+        for i in 0..<(n - 1) {
+            autocovariance += (binary[i] - mean) * (binary[i + 1] - mean)
+        }
+        autocovariance /= Double(n - 1)
+
+        // Autocorrelation
+        let rho = autocovariance / variance
+
+        // Clamp to valid range [-1, 1]
+        return max(-1.0, min(1.0, rho))
+    }
+
+    /// Wilson score confidence interval for a proportion
+    /// Uses effectiveN to account for autocorrelation
+    func wilsonConfidenceInterval(successes: Int, trials: Int, effectiveN: Double) -> (low: Double, high: Double) {
+        guard trials > 0, effectiveN > 0 else { return (0, 1) }
+
+        let p = Double(successes) / Double(trials)
+        let z = 1.96  // 95% confidence level
+        let z2 = z * z
+
+        // Wilson score interval formula, using effectiveN for variance
+        let denominator = 1 + z2 / effectiveN
+        let center = (p + z2 / (2 * effectiveN)) / denominator
+        let spread = z * sqrt(p * (1 - p) / effectiveN + z2 / (4 * effectiveN * effectiveN)) / denominator
+
+        let low = max(0, center - spread)
+        let high = min(1, center + spread)
+
+        return (low, high)
+    }
+
+    /// Get total practice time (sum of completed session durations) for a period
+    func getTotalPracticeTime(for period: StatsPeriod) -> TimeInterval {
+        let (startDate, endDate) = period.dateRange
+
+        let sql = """
+            SELECT start_time, end_time
+            FROM sessions
+            WHERE start_time >= ? AND start_time < ? AND end_time IS NOT NULL;
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return 0 }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_double(statement, 1, startDate.timeIntervalSince1970)
+        sqlite3_bind_double(statement, 2, endDate.timeIntervalSince1970)
+
+        var totalTime: TimeInterval = 0
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let startTime = sqlite3_column_double(statement, 0)
+            let endTime = sqlite3_column_double(statement, 1)
+            totalTime += (endTime - startTime)
+        }
+
+        return totalTime
+    }
+}

@@ -3,9 +3,12 @@ import AppKit
 import AVFoundation
 
 class AudioPlayer: NSObject, AVAudioPlayerDelegate {
-    // Pool of audio players to allow overlapping sounds
     private var audioPlayers: [AVAudioPlayer] = []
-    private let poolSize = 5
+
+    /// Whether any chime audio is currently playing
+    var isChimePlaying: Bool {
+        audioPlayers.contains { $0.isPlaying }
+    }
 
     // Bundled sound file names (without extension)
     private let soundNames = [
@@ -51,14 +54,7 @@ class AudioPlayer: NSObject, AVAudioPlayerDelegate {
     }
 
     private func cleanupFinishedPlayers() {
-        // Remove players that have finished playing
         audioPlayers.removeAll { !$0.isPlaying }
-
-        // If still over pool size, remove oldest
-        while audioPlayers.count > poolSize {
-            let oldest = audioPlayers.removeFirst()
-            oldest.stop()
-        }
     }
 
     private func playSystemSound() {

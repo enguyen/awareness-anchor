@@ -205,6 +205,12 @@ class AppState: ObservableObject {
     // MARK: - Private Methods
 
     private func handleChime() {
+        // Block if already in response window or chime audio still playing
+        guard !isInResponseWindow, !audioPlayer.isChimePlaying else {
+            appLog("[AppState] Chime blocked - response window active: \(isInResponseWindow), audio playing: \(audioPlayer.isChimePlaying)", category: "AppState")
+            return
+        }
+
         lastChimeTime = Date()
         pendingChimeId = UUID()
         audioPlayer.playRandomChime()
