@@ -412,6 +412,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Ignore triggers during cooldown period
         if isInCooldown { return }
 
+        // Prevent double-triggering (can be called via both onGazeTrigger and onCalibrationTriggered)
+        if isWinkAnimating { return }
+
         // Ensure window exists for this edge by calling updateEdgeGlow first
         // This creates the window if needed
         ensureGlowWindowExists(for: edge)
@@ -698,20 +701,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Public method for calibration view to show glow feedback
-    func showCalibrationGlow(for pose: HeadPose) {
+    func showCalibrationGlow(for edge: GazeEdge) {
         // Check if glow is enabled
         if !screenGlowEnabled { return }
 
-        let edge: GazeEdge
-        switch pose {
-        case .tiltUp:
-            edge = .top
-        case .turnLeftRight:
-            // Use current gaze edge from detector to know direction
-            edge = currentGazeEdge == .none ? .left : currentGazeEdge
-        case .neutral:
-            return
-        }
+        // Ignore .none edge
+        guard edge != .none else { return }
 
         // Ensure window is set up for this edge first (bypass smoothing for instant feedback)
         updateEdgeGlow(edge: edge, rawIntensity: 1.0)

@@ -22,7 +22,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
     // Callback for calibration mode - fires on every frame with raw values
     // Parameters: (rawPitch, rawYaw, deltaPitch, absYawDelta, signedYawDelta)
     var onCalibrationUpdate: ((Float, Float, Float, Float, Float) -> Void)?
-    var onCalibrationTriggered: ((HeadPose) -> Void)?  // Fires when threshold hit in calibration
+    var onCalibrationTriggered: ((HeadPose, GazeEdge) -> Void)?  // Fires when threshold hit in calibration (includes edge for direction)
 
     // Debug: publish current values for UI display
     @Published var debugPitch: Float = 0
@@ -502,7 +502,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
                         DispatchQueue.main.async {
                             self.dwellProgress = 0
                             self.onGazeTrigger?(triggeredEdge)
-                            self.onCalibrationTriggered?(detectedPose)
+                            self.onCalibrationTriggered?(detectedPose, triggeredEdge)
                         }
                     } else {
                         hasRespondedThisWindow = true

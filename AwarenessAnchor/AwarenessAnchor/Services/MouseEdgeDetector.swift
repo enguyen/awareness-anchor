@@ -42,7 +42,7 @@ class MouseEdgeDetector: ObservableObject {
     var onPoseDetected: ((HeadPose) -> Void)?
 
     /// Called when trigger happens in calibration mode (for UI feedback)
-    var onCalibrationTriggered: ((HeadPose) -> Void)?
+    var onCalibrationTriggered: ((HeadPose, GazeEdge) -> Void)?
 
     // MARK: - Configuration (fixed, not user-configurable)
 
@@ -292,8 +292,8 @@ class MouseEdgeDetector: ObservableObject {
                         self.onGazeTrigger?(detectedEdge)
 
                         if self.isCalibrationMode {
-                            // In calibration mode, use dedicated callback for UI feedback
-                            self.onCalibrationTriggered?(pose)
+                            // In calibration mode, use dedicated callback for UI feedback (include edge for direction)
+                            self.onCalibrationTriggered?(pose, detectedEdge)
                         } else {
                             // In normal mode, use pose detected callback
                             self.onPoseDetected?(pose)

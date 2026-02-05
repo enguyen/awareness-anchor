@@ -213,13 +213,13 @@ struct HeadPoseCalibrationView: View {
             }
 
             // Head pose trigger callback
-            detector.onCalibrationTriggered = { pose in
-                handleCalibrationTrigger(pose: pose)
+            detector.onCalibrationTriggered = { pose, edge in
+                handleCalibrationTrigger(pose: pose, edge: edge)
             }
 
             // Mouse edge trigger callback (for calibration mode)
-            appState.mouseEdgeDetector.onCalibrationTriggered = { pose in
-                handleCalibrationTrigger(pose: pose)
+            appState.mouseEdgeDetector.onCalibrationTriggered = { pose, edge in
+                handleCalibrationTrigger(pose: pose, edge: edge)
             }
         }
         .onDisappear {
@@ -232,14 +232,14 @@ struct HeadPoseCalibrationView: View {
         }
     }
 
-    private func handleCalibrationTrigger(pose: HeadPose) {
+    private func handleCalibrationTrigger(pose: HeadPose, edge: GazeEdge) {
         withAnimation(.spring(response: 0.3)) {
             triggeredPose = pose
             showTriggeredFeedback = true
         }
 
-        // Trigger screen glow for calibration feedback
-        AppDelegate.shared?.showCalibrationGlow(for: pose)
+        // Trigger screen glow for calibration feedback (pass edge for correct direction)
+        AppDelegate.shared?.showCalibrationGlow(for: edge)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             withAnimation {
