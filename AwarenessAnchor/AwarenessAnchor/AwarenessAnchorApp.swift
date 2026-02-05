@@ -116,46 +116,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupGazeEdgeObserver() {
-        let detector = appState.headPoseDetector
+        let coordinator = appState.inputCoordinator
 
         // Observe gaze edge changes (for legacy currentGazeEdge tracking)
-        gazeIntensityCancellable = detector.$currentGazeEdge
+        gazeIntensityCancellable = appState.headPoseDetector.$currentGazeEdge
             .receive(on: DispatchQueue.main)
             .sink { [weak self] edge in
                 self?.currentGazeEdge = edge
             }
 
-        // Observe separate intensities for multi-directional glow
-        topIntensityCancellable = detector.$topIntensity
+        // Observe unified intensities from InputCoordinator for multi-directional glow
+        topIntensityCancellable = coordinator.$topIntensity
             .receive(on: DispatchQueue.main)
             .sink { [weak self] intensity in
                 self?.updateEdgeGlow(edge: .top, rawIntensity: CGFloat(intensity))
             }
 
-        leftIntensityCancellable = detector.$leftIntensity
+        leftIntensityCancellable = coordinator.$leftIntensity
             .receive(on: DispatchQueue.main)
             .sink { [weak self] intensity in
                 self?.updateEdgeGlow(edge: .left, rawIntensity: CGFloat(intensity))
             }
 
-        rightIntensityCancellable = detector.$rightIntensity
+        rightIntensityCancellable = coordinator.$rightIntensity
             .receive(on: DispatchQueue.main)
             .sink { [weak self] intensity in
                 self?.updateEdgeGlow(edge: .right, rawIntensity: CGFloat(intensity))
             }
 
-        // Set up trigger callback for wink animation
-        detector.onGazeTrigger = { [weak self] edge in
+        // Set up trigger callback for wink animation (via coordinator)
+        coordinator.onGazeTrigger = { [weak self] edge in
             self?.performWinkAnimation(for: edge)
         }
 
         // Set up return-to-neutral callback for fading out white glow
-        detector.onReturnToNeutral = { [weak self] in
+        coordinator.onReturnToNeutral = { [weak self] in
             self?.handleReturnToNeutral()
         }
 
         // Hide all glows when calibration/tracking stops
-        calibrationActiveCancellable = detector.$isCalibrationActive
+        calibrationActiveCancellable = coordinator.$isCalibrationActive
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isActive in
                 if !isActive {
@@ -269,8 +269,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let glowSmoothing = min(baseSmoothingFactor + 0.1, 0.95)
 
         // Get gaze position for bulge effect
-        let yawPosition = CGFloat(appState.headPoseDetector.normalizedYawPosition)
-        let pitchPosition = CGFloat(appState.headPoseDetector.normalizedPitchPosition)
+        let coordinator = appState.inputCoordinator
+        let yawPosition: CGFloat
+        let pitchPosition: CGFloat
+
+        if coordinator.activeSource == .mouse {
+            // Mouse: use normalized position for bulge effect
+            yawPosition = CGFloat(appState.mouseEdgeDetector.normalizedXPosition)
+            pitchPosition = CGFloat(appState.mouseEdgeDetector.normalizedYPosition)
+        } else {
+            // Head pose: use normalized positions for bulge effect
+            yawPosition = CGFloat(appState.headPoseDetector.normalizedYawPosition)
+            pitchPosition = CGFloat(appState.headPoseDetector.normalizedPitchPosition)
+        }
 
         // Apply extra smoothing and update the appropriate edge
         switch edge {
@@ -552,7 +563,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Check if we're in calibration mode for cooldown
-        let isCalibrationMode = appState.headPoseDetector.isCalibrationActive
+        let isCalibrationMode = appState.inputCoordinator.isCalibrationActive
 
         // Fade out the white glow
         let fadeOutAnimation = CAKeyframeAnimation(keyPath: "opacity")
@@ -593,13 +604,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             if isCalibrationMode {
                 // In calibration mode, add 2 second cooldown before allowing new highlights
-                // Set cooldown on both AppDelegate (for glow updates) and HeadPoseDetector (for triggers)
+                // Set cooldown on AppDelegate (for glow updates) and both detectors (for triggers)
                 self.isInCooldown = true
                 self.appState.headPoseDetector.isInCooldown = true
+                self.appState.mouseEdgeDetector.isInCooldown = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                     guard let self = self else { return }
                     self.isInCooldown = false
                     self.appState.headPoseDetector.isInCooldown = false
+                    self.appState.mouseEdgeDetector.isInCooldown = false
                     self.isWinkAnimating = false
                     // Reset smoothed intensities again to ensure clean start
                     self.smoothedTopIntensity = 0

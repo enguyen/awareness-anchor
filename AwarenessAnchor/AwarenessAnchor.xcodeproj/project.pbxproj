@@ -28,6 +28,8 @@
 		019 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121 /* Logger.swift */; };
 		020 /* HeadPoseCalibrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 122 /* HeadPoseCalibrationView.swift */; };
 		021 /* HeadPoseSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 123 /* HeadPoseSceneView.swift */; };
+		022 /* MouseEdgeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 124 /* MouseEdgeDetector.swift */; };
+		023 /* InputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125 /* InputCoordinator.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -55,6 +57,8 @@
 		121 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 		122 /* HeadPoseCalibrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadPoseCalibrationView.swift; sourceTree = "<group>"; };
 		123 /* HeadPoseSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadPoseSceneView.swift; sourceTree = "<group>"; };
+		124 /* MouseEdgeDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MouseEdgeDetector.swift; sourceTree = "<group>"; };
+		125 /* InputCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputCoordinator.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -130,6 +134,8 @@
 				111 /* DataStore.swift */,
 				112 /* HeadPoseDetector.swift */,
 				121 /* Logger.swift */,
+				124 /* MouseEdgeDetector.swift */,
+				125 /* InputCoordinator.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -243,6 +249,8 @@
 				019 /* Logger.swift in Sources */,
 				020 /* HeadPoseCalibrationView.swift in Sources */,
 				021 /* HeadPoseSceneView.swift in Sources */,
+				022 /* MouseEdgeDetector.swift in Sources */,
+				023 /* InputCoordinator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -5,11 +5,16 @@ struct SettingsView: View {
     @StateObject private var hotkeyManager = HotkeyManager.shared
 
     @AppStorage("headPoseEnabled") private var headPoseEnabled = false
+    @AppStorage("mouseTrackingEnabled") private var mouseTrackingEnabled = false
     @AppStorage("launchAtLogin") private var launchAtLogin = false
 
     var body: some View {
         TabView {
-            GeneralSettingsView(headPoseEnabled: $headPoseEnabled, launchAtLogin: $launchAtLogin)
+            GeneralSettingsView(
+                headPoseEnabled: $headPoseEnabled,
+                mouseTrackingEnabled: $mouseTrackingEnabled,
+                launchAtLogin: $launchAtLogin
+            )
                 .tabItem {
                     Label("General", systemImage: "gear")
                 }
@@ -19,10 +24,10 @@ struct SettingsView: View {
                     Label("Chimes", systemImage: "bell")
                 }
 
-            if headPoseEnabled {
+            if headPoseEnabled || mouseTrackingEnabled {
                 HeadPoseCalibrationView(detector: appState.headPoseDetector)
                     .tabItem {
-                        Label("Calibrate", systemImage: "face.smiling")
+                        Label("Calibrate", systemImage: "dial.low")
                     }
             }
 
@@ -40,7 +45,7 @@ struct SettingsView: View {
         .environmentObject(appState)
         .onDisappear {
             // Stop calibration if settings window is closed
-            appState.headPoseDetector.stopCalibration()
+            appState.inputCoordinator.stopCalibration()
         }
     }
 }
@@ -78,6 +83,7 @@ struct SettingsSection<Content: View>: View {
 
 struct GeneralSettingsView: View {
     @Binding var headPoseEnabled: Bool
+    @Binding var mouseTrackingEnabled: Bool
     @Binding var launchAtLogin: Bool
     @AppStorage("screenGlowEnabled") private var screenGlowEnabled = true
     @AppStorage("screenGlowOpacity") private var screenGlowOpacity = 0.5
@@ -93,14 +99,20 @@ struct GeneralSettingsView: View {
 
                 Divider()
 
-                // Head Pose Detection
-                SettingsSection(title: "Head Pose Detection") {
-                    Toggle("Enable camera-based head tracking", isOn: $headPoseEnabled)
+                // Responding to Chimes
+                SettingsSection(title: "Responding to Chimes") {
+                    // Mouse pointer tracking
+                    Toggle("Mouse pointer tracking", isOn: $mouseTrackingEnabled)
                         .toggleStyle(.switch)
 
-                    if headPoseEnabled {
+                    // Camera-based head tracking
+                    Toggle("Camera-based head tracking", isOn: $headPoseEnabled)
+                        .toggleStyle(.switch)
+
+                    // Unified gesture explanation (shown when either is enabled)
+                    if mouseTrackingEnabled || headPoseEnabled {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Gestures")
+                            Text("Move mouse or turn head to respond")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                                 .foregroundColor(.secondary)
@@ -110,7 +122,7 @@ struct GeneralSettingsView: View {
                                     .foregroundColor(.green)
                                     .font(.title2)
                                 VStack(alignment: .leading) {
-                                    Text("Tilt Head Up")
+                                    Text("Up / Top")
                                         .fontWeight(.medium)
                                     Text("Already Present")
                                         .font(.caption)
@@ -124,7 +136,7 @@ struct GeneralSettingsView: View {
                                     .foregroundColor(.orange)
                                     .font(.title2)
                                 VStack(alignment: .leading) {
-                                    Text("Turn Head")
+                                    Text("Left / Right")
                                         .fontWeight(.medium)
                                     Text("Returned to Awareness")
                                         .font(.caption)
@@ -137,7 +149,7 @@ struct GeneralSettingsView: View {
                         .background(Color(NSColor.controlBackgroundColor))
                         .cornerRadius(8)
 
-                        Text("Camera activates only during response windows. If no face is detected, the chime is not counted.")
+                        Text("Camera and mouse position tracking activate only during response windows after a chime.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -166,7 +178,7 @@ struct GeneralSettingsView: View {
                         }
                     }
 
-                    Text("Displays a colored glow on screen edges when tracking head movement and registering responses.")
+                    Text("Displays a colored glow on screen edges when tracking input and registering responses.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

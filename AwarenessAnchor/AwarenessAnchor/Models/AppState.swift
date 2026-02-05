@@ -19,7 +19,17 @@ class AppState: ObservableObject {
     private let chimeScheduler: ChimeScheduler
     private let audioPlayer: AudioPlayer
     let dataStore: DataStore  // Public for StatsView access
-    let headPoseDetector: HeadPoseDetector  // Public for debug UI access
+    let inputCoordinator: InputCoordinator  // Unified input handler
+
+    /// Direct access to head pose detector (for calibration UI and backward compatibility)
+    var headPoseDetector: HeadPoseDetector {
+        inputCoordinator.headPoseDetector
+    }
+
+    /// Direct access to mouse edge detector (for calibration UI)
+    var mouseEdgeDetector: MouseEdgeDetector {
+        inputCoordinator.mouseEdgeDetector
+    }
 
     // MARK: - Callbacks
     var onResponseRecorded: ((ResponseType) -> Void)?
@@ -52,7 +62,7 @@ class AppState: ObservableObject {
         self.chimeScheduler = ChimeScheduler()
         self.audioPlayer = AudioPlayer()
         self.dataStore = DataStore()
-        self.headPoseDetector = HeadPoseDetector()
+        self.inputCoordinator = InputCoordinator()
 
         setupBindings()
     }
@@ -69,8 +79,8 @@ class AppState: ObservableObject {
             self?.handleChime()
         }
 
-        // Head pose detection
-        headPoseDetector.onPoseDetected = { [weak self] pose in
+        // Unified input detection (head pose and/or mouse edge)
+        inputCoordinator.onPoseDetected = { [weak self] pose in
             guard let self = self, self.isInResponseWindow else { return }
             switch pose {
             case .tiltUp:
@@ -106,15 +116,14 @@ class AppState: ObservableObject {
 
         chimeScheduler.start(averageIntervalSeconds: averageIntervalSeconds)
 
-        if UserDefaults.standard.bool(forKey: "headPoseEnabled") {
-            headPoseDetector.startDetection()
-        }
+        // Start input detection (coordinator handles which inputs are enabled)
+        inputCoordinator.startDetection()
     }
 
     func pause() {
         isPlaying = false
         chimeScheduler.stop()
-        headPoseDetector.stopDetection()
+        inputCoordinator.stopDetection()
         endResponseWindow(responded: false)
         endSession()
     }
@@ -129,11 +138,11 @@ class AppState: ObservableObject {
         // Pause chime timer (don't stop - session continues)
         chimeScheduler.pause()
 
-        // Stop camera and end response window if active
+        // Stop tracking and end response window if active
         if isInResponseWindow {
             endResponseWindow(responded: false)
         }
-        headPoseDetector.deactivateWindow()
+        inputCoordinator.deactivateWindow()
     }
 
     func handleWake() {
@@ -144,10 +153,8 @@ class AppState: ObservableObject {
         // Resume chime timer
         chimeScheduler.resume()
 
-        // Re-enable head pose detection if it was enabled
-        if UserDefaults.standard.bool(forKey: "headPoseEnabled") {
-            headPoseDetector.startDetection()
-        }
+        // Re-enable input detection
+        inputCoordinator.startDetection()
     }
 
     func endSession() {
@@ -223,10 +230,8 @@ class AppState: ObservableObject {
             }
         }
 
-        // Activate camera for head pose if enabled
-        if UserDefaults.standard.bool(forKey: "headPoseEnabled") {
-            headPoseDetector.activateForWindow()
-        }
+        // Activate input tracking for this response window
+        inputCoordinator.activateForWindow()
     }
 
     private func endResponseWindow(responded: Bool) {
@@ -236,10 +241,12 @@ class AppState: ObservableObject {
         responseWindowRemainingSeconds = 0
 
         // Check if user was present (face detected) before deactivating
+        // Note: With mouse tracking, user is always considered present
         let headPoseEnabled = UserDefaults.standard.bool(forKey: "headPoseEnabled")
-        let userWasPresent = !headPoseEnabled || headPoseDetector.faceWasDetectedThisWindow
+        let mouseEnabled = UserDefaults.standard.bool(forKey: "mouseTrackingEnabled")
+        let userWasPresent = mouseEnabled || !headPoseEnabled || inputCoordinator.faceWasDetectedThisWindow
 
-        headPoseDetector.deactivateWindow()
+        inputCoordinator.deactivateWindow()
 
         // If no response, record as missed - but only if user was actually present
         // (if head pose is enabled and no face detected, user was away from device)
