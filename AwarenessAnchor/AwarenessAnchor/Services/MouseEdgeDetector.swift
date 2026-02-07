@@ -58,7 +58,7 @@ class MouseEdgeDetector: ObservableObject {
     // MARK: - Private State
 
     private var eventMonitor: Any?
-    private var isWindowActive = false
+    private(set) var isWindowActive = false
     private var isCalibrationMode = false
 
     // Dwell time tracking (uses HeadPoseDetector's dwellTime setting)
@@ -124,7 +124,14 @@ class MouseEdgeDetector: ObservableObject {
 
     func deactivateWindow() {
         isWindowActive = false
-        resetState()
+        // Don't reset intensities here — let them persist based on mouse position
+        // so the glow holds after a trigger until the mouse moves away.
+        // Only reset dwell tracking state.
+        dwellStartTime = nil
+        currentDwellEdge = .none
+        DispatchQueue.main.async {
+            self.dwellProgress = 0
+        }
     }
 
     // MARK: - Calibration Mode
@@ -171,11 +178,9 @@ class MouseEdgeDetector: ObservableObject {
     }
 
     private func processMouseEvent(_ event: NSEvent) {
-        guard isWindowActive else { return }
-
         let mouseLocation = NSEvent.mouseLocation
 
-        // Update tracking for speed calculation
+        // Update tracking for speed calculation (always, even when window inactive)
         lastMousePosition = mouseLocation
         lastUpdateTime = Date()
 
@@ -197,25 +202,18 @@ class MouseEdgeDetector: ObservableObject {
         let maxDistanceToRight = screenFrame.maxX - centerX
 
         // Calculate intensities as fraction of distance to edge (matching head pose behavior)
-        // Intensity starts at 0 at center and reaches 1 at edge
-        // Only show intensity in the direction of movement (like head pose)
-        let deadZone: CGFloat = 20  // Small dead zone at center (like head pose's 0.02 threshold)
+        let deadZone: CGFloat = 20
 
         var rawTopIntensity: CGFloat = 0
         var rawLeftIntensity: CGFloat = 0
         var rawRightIntensity: CGFloat = 0
 
-        // Top: only when mouse is above center
         if deltaY > deadZone {
             rawTopIntensity = min(deltaY / maxDistanceToTop, 1.0)
         }
-
-        // Left: only when mouse is left of center
         if deltaX < -deadZone {
             rawLeftIntensity = min(abs(deltaX) / maxDistanceToLeft, 1.0)
         }
-
-        // Right: only when mouse is right of center
         if deltaX > deadZone {
             rawRightIntensity = min(deltaX / maxDistanceToRight, 1.0)
         }
@@ -224,7 +222,6 @@ class MouseEdgeDetector: ObservableObject {
         let distanceFromTop = screenFrame.maxY - mouseLocation.y
         let distanceFromLeft = mouseLocation.x - screenFrame.minX
         let distanceFromRight = screenFrame.maxX - mouseLocation.x
-        let distanceFromBottom = mouseLocation.y - screenFrame.minY
 
         // Determine which edge we're closest to (if any is in trigger zone)
         var detectedEdge: GazeEdge = .none
@@ -239,23 +236,29 @@ class MouseEdgeDetector: ObservableObject {
 
         // Check if we're in neutral zone (near center, for return-to-neutral detection)
         let distanceFromCenter = sqrt(deltaX * deltaX + deltaY * deltaY)
-        let neutralRadius = min(screenFrame.width, screenFrame.height) * 0.2  // 20% of smaller dimension
+        let neutralRadius = min(screenFrame.width, screenFrame.height) * 0.2
         let isInNeutralZone = distanceFromCenter < neutralRadius
 
-        // Calculate normalized position for bulge effect (0-1 range)
+        // Calculate normalized position for bulge effect
         let normalizedX = Float((mouseLocation.x - screenFrame.minX) / screenFrame.width)
         let normalizedY = Float((mouseLocation.y - screenFrame.minY) / screenFrame.height)
 
-        // Update published intensities and positions on main thread
-        DispatchQueue.main.async {
-            self.topIntensity = Float(rawTopIntensity)
-            self.leftIntensity = Float(rawLeftIntensity)
-            self.rightIntensity = Float(rawRightIntensity)
-            self.normalizedXPosition = normalizedX
-            self.normalizedYPosition = normalizedY
+        // Update intensities only when in a visual-active state:
+        // - Window active (response window open)
+        // - Calibration mode (preview active)
+        // - Post-trigger (glow persists until return to neutral)
+        if isWindowActive || isCalibrationMode || requiresReturnToNeutral {
+            DispatchQueue.main.async {
+                self.topIntensity = Float(rawTopIntensity)
+                self.leftIntensity = Float(rawLeftIntensity)
+                self.rightIntensity = Float(rawRightIntensity)
+                self.normalizedXPosition = normalizedX
+                self.normalizedYPosition = normalizedY
+            }
         }
 
-        // Handle dwell tracking
+        // Handle dwell tracking (only when window is active for triggers)
+        // Also handle return-to-neutral detection (needed even after window deactivates)
         processDwellLogic(detectedEdge: detectedEdge, isInNeutralZone: isInNeutralZone)
     }
 
@@ -267,6 +270,9 @@ class MouseEdgeDetector: ObservableObject {
             if requiresReturnToNeutral || isInCooldown {
                 return
             }
+
+            // Only process dwell triggers when window is active (or in calibration)
+            guard isWindowActive || isCalibrationMode else { return }
 
             if detectedEdge == currentDwellEdge, let startTime = dwellStartTime {
                 // Same edge, check dwell progress
@@ -292,10 +298,8 @@ class MouseEdgeDetector: ObservableObject {
                         self.onGazeTrigger?(detectedEdge)
 
                         if self.isCalibrationMode {
-                            // In calibration mode, use dedicated callback for UI feedback (include edge for direction)
                             self.onCalibrationTriggered?(pose, detectedEdge)
                         } else {
-                            // In normal mode, use pose detected callback
                             self.onPoseDetected?(pose)
                         }
                     }
@@ -322,7 +326,7 @@ class MouseEdgeDetector: ObservableObject {
                 }
             }
 
-            // Check for return to neutral after a trigger
+            // Check for return to neutral after a trigger (works even after window deactivates)
             if requiresReturnToNeutral && isInNeutralZone {
                 requiresReturnToNeutral = false
                 DispatchQueue.main.async {

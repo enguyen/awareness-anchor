@@ -1,7 +1,7 @@
 # Awareness Anchor - Project Status
 
-**Last Updated:** 2025-02-02
-**Current Phase:** 2.5 (Visual Feedback Enhancement) - Screen Edge Glow Implemented
+**Last Updated:** 2025-02-05
+**Current Phase:** 3 (Statistics & Optimization) - Time-in-state estimation complete, Phase 2 optimization planned
 
 ---
 
@@ -13,23 +13,25 @@ Native macOS menu bar app for mindfulness bell reminders. Plays Tibetan bowl sou
 ### Current State: WORKING
 - App builds and runs
 - Chimes play on schedule with 5 bundled Tibetan bowl MP3s
-- Response tracking works (keyboard shortcuts + head pose)
+- Response tracking works via head pose AND/OR mouse edge detection
 - SQLite persistence stores sessions and events
-- Settings panel functional
+- Screen edge glow shows direction-aware feedback (gradient + wink animation)
+- Time-in-state estimation with autocorrelation-adjusted confidence intervals
+- Settings panel functional with Calibrate tab
 
-### Active Blockers
+### Active Work
 
-1. **Screen Glow Crashes** (Phase 2.5 feature, disabled)
-   - Metal/GPU errors when creating NSWindow overlay for screen edge glow
-   - Symptom: Beach ball, unresponsive app
-   - Root cause: SwiftUI view inside overlay window causes GPU allocation failures
-   - **Next step:** Reimplement using pure Core Animation (CALayer + CABasicAnimation)
-   - Workaround: Visual feedback currently only changes menu bar icon
+1. **Phase 2 Awareness Optimization** (planned, not started)
+   - Branch: `phase2-awareness-optimization` (not yet created)
+   - Kaplan-Meier survival estimation for awareness duration
+   - Optimal chime frequency recommendation
+   - Plan at `.claude/plans/steady-enchanting-bentley.md`
 
-2. **Threshold Tuning** (minor)
-   - Pitch threshold: 0.12 radians (~7 degrees)
-   - Yaw threshold: 0.20 radians (~11 degrees)
-   - May need adjustment based on user testing
+2. **Calibration View Refinements** (just completed)
+   - Reticle on frustum projection plane (head pose) / cursor arrow (mouse)
+   - Intensity-driven frustum face opacity
+   - Grayscale preview until tracking ready
+   - 0.5s debounced input source switching
 
 ---
 
@@ -42,6 +44,9 @@ Native macOS menu bar app for mindfulness bell reminders. Plays Tibetan bowl sou
 | Persistence | SQLite (direct) | Simple, no dependencies |
 | Global hotkeys | NSEvent.addGlobalMonitorForEvents | Works when app unfocused |
 | Target OS | macOS 13.0+ | Broader compatibility |
+| Input handling | InputCoordinator (unified) | Motion-based precedence between head pose and mouse |
+| Screen glow | Pure Core Animation (CAGradientLayer) | SwiftUI in overlay windows crashes (see DEAD_ENDS) |
+| Statistics | PASTA theorem + Wilson CI | Unbiased time proportion with autocorrelation correction |
 
 ---
 
@@ -49,52 +54,55 @@ Native macOS menu bar app for mindfulness bell reminders. Plays Tibetan bowl sou
 
 ```
 AwarenessAnchor/
-  AwarenessAnchorApp.swift     # Entry point, menu bar, hotkeys, visual feedback
+  AwarenessAnchorApp.swift     # Entry point (AppDelegate), menu bar, glow overlays
   Models/
-    AppState.swift             # Central state, response callbacks
-    ChimeEvent.swift           # Event data model
+    AppState.swift             # Central state, chime scheduling, response recording
+    ChimeEvent.swift           # Event data model (present/returned/missed)
     Session.swift              # Session data model
   Views/
     MenuBarView.swift          # Main popover UI + debug panel
-    SettingsView.swift         # Settings tabs (redesigned)
-    StatsView.swift            # Statistics display
+    SettingsView.swift         # Settings tabs (General, Calibrate, Stats)
+    StatsView.swift            # Time-in-awareness card, response distribution, practice time
+    HeadPoseSceneView.swift    # SceneKit 3D calibration visualization
+    HeadPoseCalibrationView.swift  # Calibration tab UI with preview mode
   Services/
-    AudioPlayer.swift          # Sound playback
+    AudioPlayer.swift          # Sound playback (overlap prevention)
     ChimeScheduler.swift       # Random interval timing
-    DataStore.swift            # SQLite persistence
+    DataStore.swift            # SQLite persistence + time estimation statistics
     HeadPoseDetector.swift     # Vision framework face detection
+    MouseEdgeDetector.swift    # Mouse proximity to screen edges
+    InputCoordinator.swift     # Unified input: speed-based source precedence
     HotkeyManager.swift        # Global keyboard shortcuts
-    Logger.swift               # File-based debug logging (NEW)
+    Logger.swift               # File-based debug logging
   Resources/
     bowl-1.mp3 through bowl-5.mp3
 ```
 
 ---
 
-## Resolved Debug Loops (Reference)
+## Resolved Issues (Reference)
 
-These issues were resolved in the 2025-02-01 session. Documented here for future reference:
+### Input Coordination
+- Mouse dwell near screen edge was interrupted by head pose micro-movements stealing active source
+- Fix: Lock source to mouse during dwell, 0.5s debounce on source switching
+- Mouse intensities leaked outside active windows; fix: guard on isWindowActive/isCalibrationMode/requiresReturnToNeutral
 
-1. **Missing AppKit imports** - SwiftUI doesn't auto-include AppKit for NSEvent/NSSound
-2. **macOS 14+ APIs** - onChange(initial:), SettingsLink, openSettings need version checks
-3. **GeometryReader in popover** - Causes layout recursion; use native ProgressView instead
-4. **VNDetectFaceLandmarksRequest** - Does NOT provide pitch/yaw; use VNDetectFaceRectanglesRequest rev3
-5. **Vision pitch coordinates** - Looking UP makes pitch MORE NEGATIVE (counterintuitive)
-6. **Slider tick marks** - `step:` parameter renders visual ticks; round in binding instead
+### Chime Overlap
+- Overlapping chime audio and response windows corrupted data
+- Fix: Guard in handleChime() checks both isInResponseWindow and audioPlayer.isChimePlaying
+
+### SceneKit Frustum Transparency
+- PBR materials on custom quad geometry ignored transparency settings
+- Fix: Use .constant lighting + .alpha blend + writesToDepthBuffer=false
 
 ---
 
 ## Roadmap
 
-### Phase 2.5: Visual Feedback Enhancement (Next)
-- [ ] Direction-aware screen edge glow (top/left/right based on head direction)
-- [ ] Pulse animation using Core Animation (not SwiftUI in overlay)
-- [ ] Tests for head pose threshold logic
-
-### Phase 3: Analytics Dashboard (Future)
-- [ ] Daily/weekly/monthly charts (SwiftUI Charts)
-- [ ] Time-of-day awareness patterns
-- [ ] CSV export
+### Phase 2 Optimization (Next)
+- [ ] AwarenessOptimizer.swift: Kaplan-Meier survival, chime frequency optimization
+- [ ] DataStore bridge methods for optimization stats
+- [ ] StatsView cards: chime effectiveness, awareness duration, optimal frequency, trend
 
 ### Phase 4: Extensions (Backlog)
 - Apple Watch companion
@@ -109,7 +117,8 @@ From `.claude/CLAUDE.md`:
 
 - **15-Minute Pivot Rule**: If stuck >15 min, try completely different approach
 - **Stuck Detector Signals**: 3+ minor variations, >20 min reading docs, complexity doubling
-- **Test -> Single -> Batch**: For any operation with cost or risk
+- **Logging**: Use `appLog()` not `print()` — logs at `~/Library/Logs/AwarenessAnchor/app.log`
+- **SQLite verification**: `sqlite3` CLI first before assuming code bugs
 
 ---
 
@@ -118,5 +127,5 @@ From `.claude/CLAUDE.md`:
 When resuming work:
 1. Read this STATUS.md for context
 2. Check `docs/archive/sessions/` for detailed session logs
-3. Run app in Xcode to verify current state
-4. Check Console.app for any runtime warnings
+3. Check `.claude/plans/` for active implementation plans
+4. Run app in Xcode to verify current state

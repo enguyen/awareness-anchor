@@ -41,7 +41,13 @@ struct HeadPoseCalibrationView: View {
                                 dwellProgress: appState.inputCoordinator.dwellProgress,
                                 isTestActive: isTestActive,
                                 faceDetected: detector.faceDetected,
-                                isInCooldown: appState.inputCoordinator.isInCooldown
+                                isInCooldown: appState.inputCoordinator.isInCooldown,
+                                topIntensity: appState.inputCoordinator.topIntensity,
+                                leftIntensity: appState.inputCoordinator.leftIntensity,
+                                rightIntensity: appState.inputCoordinator.rightIntensity,
+                                activeSource: appState.inputCoordinator.activeSource.rawValue,
+                                normalizedMouseX: appState.mouseEdgeDetector.normalizedXPosition,
+                                normalizedMouseY: appState.mouseEdgeDetector.normalizedYPosition
                             )
                             .frame(maxWidth: .infinity)
                             .frame(height: 230)
@@ -58,6 +64,7 @@ struct HeadPoseCalibrationView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .frame(height: 230)
+                        .saturation(isTestActive && !appState.inputCoordinator.isInCooldown && detector.faceDetected ? 1 : 0)
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
                                 .stroke(Color(NSColor.separatorColor), lineWidth: 1)
@@ -85,6 +92,7 @@ struct HeadPoseCalibrationView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .frame(height: 230)
+                        .saturation(isTestActive && !appState.inputCoordinator.isInCooldown ? 1 : 0)
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
                                 .stroke(Color(NSColor.separatorColor), lineWidth: 1)
