@@ -25,15 +25,21 @@ enum ResponseType: String, Codable, CaseIterable {
 struct ChimeEvent: Identifiable, Codable {
     let id: UUID
     let timestamp: Date
-    let responseType: ResponseType
+    var responseType: ResponseType
     let responseTimeMs: Int?  // nil if missed
     let sessionId: UUID
+    var originalResponseType: ResponseType?  // non-nil if corrected (stores pre-correction type)
+    var correctedAt: Date?                   // when the correction was made
 
-    init(id: UUID = UUID(), timestamp: Date = Date(), responseType: ResponseType, responseTimeMs: Int? = nil, sessionId: UUID) {
+    var wasCorrected: Bool { originalResponseType != nil }
+
+    init(id: UUID = UUID(), timestamp: Date = Date(), responseType: ResponseType, responseTimeMs: Int? = nil, sessionId: UUID, originalResponseType: ResponseType? = nil, correctedAt: Date? = nil) {
         self.id = id
         self.timestamp = timestamp
         self.responseType = responseType
         self.responseTimeMs = responseTimeMs
         self.sessionId = sessionId
+        self.originalResponseType = originalResponseType
+        self.correctedAt = correctedAt
     }
 }

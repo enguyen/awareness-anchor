@@ -13,6 +13,7 @@ class AppState: ObservableObject {
     @Published var responseWindowRemainingSeconds: Double = 0
     @Published var lastChimeTime: Date?
     @Published var todayStats: DayStats = DayStats()
+    @Published var lastRecordedEvent: ChimeEvent?
     @Published var statsNeedRefresh: UUID = UUID()  // Changes to trigger stats refresh
 
     // MARK: - Services
@@ -181,6 +182,7 @@ class AppState: ObservableObject {
 
         appLog("[AppState] Calling dataStore.saveChimeEvent", category: "AppState")
         dataStore.saveChimeEvent(event)
+        lastRecordedEvent = event
         updateTodayStats(with: type)
         endResponseWindow(responded: true)
 
@@ -200,6 +202,42 @@ class AppState: ObservableObject {
     func updateResponseWindow(_ seconds: Double) {
         responseWindowSeconds = seconds
         UserDefaults.standard.set(seconds, forKey: "responseWindowSeconds")
+    }
+
+    func correctLastResponse(_ newType: ResponseType) {
+        guard var event = lastRecordedEvent, event.responseType != newType else { return }
+
+        let oldType = event.responseType
+        dataStore.updateChimeEventType(eventId: event.id, newType: newType)
+
+        // Update in-memory event
+        if event.originalResponseType == nil {
+            event.originalResponseType = oldType
+        }
+        event.responseType = newType
+        event.correctedAt = Date()
+        lastRecordedEvent = event
+
+        // Adjust todayStats if the event is from today
+        let calendar = Calendar.current
+        if calendar.isDateInToday(event.timestamp) {
+            adjustTodayStats(removing: oldType, adding: newType)
+        }
+
+        statsNeedRefresh = UUID()
+    }
+
+    private func adjustTodayStats(removing oldType: ResponseType, adding newType: ResponseType) {
+        switch oldType {
+        case .present: todayStats.presentCount = max(0, todayStats.presentCount - 1)
+        case .returned: todayStats.returnedCount = max(0, todayStats.returnedCount - 1)
+        case .missed: todayStats.missedCount = max(0, todayStats.missedCount - 1)
+        }
+        switch newType {
+        case .present: todayStats.presentCount += 1
+        case .returned: todayStats.returnedCount += 1
+        case .missed: todayStats.missedCount += 1
+        }
     }
 
     // MARK: - Private Methods
@@ -264,6 +302,7 @@ class AppState: ObservableObject {
                     sessionId: sessionId
                 )
                 dataStore.saveChimeEvent(event)
+                lastRecordedEvent = event
                 updateTodayStats(with: .missed)
             } else {
                 print("[AppState] No face detected during window - skipping missed event (user away)")
@@ -294,6 +333,7 @@ class AppState: ObservableObject {
             returnedCount: events.filter { $0.responseType == .returned }.count,
             missedCount: events.filter { $0.responseType == .missed }.count
         )
+        lastRecordedEvent = dataStore.getLastEvent()
     }
 
     private func loadSettings() {

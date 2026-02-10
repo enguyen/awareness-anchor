@@ -60,6 +60,10 @@ class DataStore {
         executeSQL(createSessionsTable)
         executeSQL(createEventsTable)
         executeSQL(createEventsIndex)
+
+        // Migration: add correction tracking columns (safe to run repeatedly - errors ignored for existing columns)
+        executeSQL("ALTER TABLE chime_events ADD COLUMN original_response_type TEXT;")
+        executeSQL("ALTER TABLE chime_events ADD COLUMN corrected_at REAL;")
     }
 
     private func executeSQL(_ sql: String) {
@@ -271,6 +275,107 @@ class DataStore {
         }
 
         return events
+    }
+
+    // MARK: - Last Event & Correction
+
+    func getLastEvent() -> ChimeEvent? {
+        let sql = """
+            SELECT id, timestamp, response_type, response_time_ms, session_id, original_response_type, corrected_at
+            FROM chime_events
+            ORDER BY timestamp DESC LIMIT 1;
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(statement) }
+
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return parseChimeEventRow(statement)
+    }
+
+    func updateChimeEventType(eventId: UUID, newType: ResponseType) {
+        // First read the current event to preserve original_response_type
+        let readSql = """
+            SELECT original_response_type, response_type FROM chime_events WHERE id = ?;
+        """
+
+        var readStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, readSql, -1, &readStmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(readStmt) }
+
+        sqlite3_bind_text(readStmt, 1, eventId.uuidString, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(readStmt) == SQLITE_ROW else { return }
+
+        let hasOriginal = sqlite3_column_type(readStmt, 0) != SQLITE_NULL
+        let currentType = String(cString: sqlite3_column_text(readStmt, 1))
+
+        // If never corrected before, store the current type as original
+        let updateSql: String
+        if hasOriginal {
+            updateSql = """
+                UPDATE chime_events SET response_type = ?, corrected_at = ? WHERE id = ?;
+            """
+        } else {
+            updateSql = """
+                UPDATE chime_events SET response_type = ?, corrected_at = ?, original_response_type = ? WHERE id = ?;
+            """
+        }
+
+        var updateStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, updateSql, -1, &updateStmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(updateStmt) }
+
+        sqlite3_bind_text(updateStmt, 1, newType.rawValue, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(updateStmt, 2, Date().timeIntervalSince1970)
+
+        if hasOriginal {
+            sqlite3_bind_text(updateStmt, 3, eventId.uuidString, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_text(updateStmt, 3, currentType, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(updateStmt, 4, eventId.uuidString, -1, SQLITE_TRANSIENT)
+        }
+
+        let result = sqlite3_step(updateStmt)
+        if result == SQLITE_DONE {
+            appLog("[DataStore] SUCCESS: Corrected event \(eventId) to \(newType.rawValue)", category: "DataStore")
+        } else {
+            appLog("[DataStore] ERROR: Failed to correct event, result=\(result)", category: "DataStore")
+        }
+    }
+
+    /// Parse a chime event row including optional correction columns
+    private func parseChimeEventRow(_ statement: OpaquePointer?) -> ChimeEvent? {
+        guard let statement = statement else { return nil }
+
+        let idString = String(cString: sqlite3_column_text(statement, 0))
+        let timestamp = Date(timeIntervalSince1970: sqlite3_column_double(statement, 1))
+        let responseTypeString = String(cString: sqlite3_column_text(statement, 2))
+        let responseTimeMs: Int? = sqlite3_column_type(statement, 3) != SQLITE_NULL
+            ? Int(sqlite3_column_int(statement, 3))
+            : nil
+        let sessionIdString = String(cString: sqlite3_column_text(statement, 4))
+
+        let originalResponseType: ResponseType? = sqlite3_column_type(statement, 5) != SQLITE_NULL
+            ? ResponseType(rawValue: String(cString: sqlite3_column_text(statement, 5)))
+            : nil
+        let correctedAt: Date? = sqlite3_column_type(statement, 6) != SQLITE_NULL
+            ? Date(timeIntervalSince1970: sqlite3_column_double(statement, 6))
+            : nil
+
+        guard let id = UUID(uuidString: idString),
+              let responseType = ResponseType(rawValue: responseTypeString),
+              let sessionId = UUID(uuidString: sessionIdString) else { return nil }
+
+        return ChimeEvent(
+            id: id,
+            timestamp: timestamp,
+            responseType: responseType,
+            responseTimeMs: responseTimeMs,
+            sessionId: sessionId,
+            originalResponseType: originalResponseType,
+            correctedAt: correctedAt
+        )
     }
 
     // MARK: - Analytics

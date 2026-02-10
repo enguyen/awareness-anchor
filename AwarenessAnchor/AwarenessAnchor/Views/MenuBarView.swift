@@ -26,6 +26,14 @@ struct MenuBarView: View {
                 Divider()
             }
 
+            // Last Response Quick-Edit (only when not in response window, and event is from today)
+            if !appState.isInResponseWindow, let event = appState.lastRecordedEvent,
+               Calendar.current.isDateInToday(event.timestamp) {
+                LastResponseView(event: event)
+                    .padding()
+                Divider()
+            }
+
             // Play/Pause Control
             PlaybackControlView()
                 .padding()
@@ -128,6 +136,104 @@ struct ResponseWindowView: View {
         .padding()
         .background(Color.green.opacity(0.05))
         .cornerRadius(12)
+    }
+}
+
+struct LastResponseView: View {
+    @EnvironmentObject var appState: AppState
+    let event: ChimeEvent
+
+    // Timer to refresh relative time every 5 seconds
+    @State private var timeRefresh = Date()
+    private let timer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // Header row: label + relative time + corrected badge
+            HStack(spacing: 4) {
+                Text("Last Response")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+
+                if event.wasCorrected {
+                    Text("(edited)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Text(relativeTime(from: event.timestamp, now: timeRefresh))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            // All three types on one line: active is bold/filled, others are clickable
+            HStack(spacing: 6) {
+                ForEach(ResponseType.allCases, id: \.self) { type in
+                    let isActive = type == event.responseType
+
+                    if isActive {
+                        // Active state: prominent, non-clickable
+                        HStack(spacing: 4) {
+                            Text(type.emoji)
+                                .font(.callout)
+                            Text(type.displayName)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(colorForType(type).opacity(0.25))
+                        .foregroundColor(colorForType(type))
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(colorForType(type).opacity(0.5), lineWidth: 1)
+                        )
+                    } else {
+                        // Inactive state: subtle, clickable
+                        Button {
+                            appState.correctLastResponse(type)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(type.emoji)
+                                    .font(.callout)
+                                Text(type.displayName)
+                                    .font(.caption)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.secondary.opacity(0.08))
+                            .foregroundColor(.secondary)
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .onReceive(timer) { time in
+            timeRefresh = time
+        }
+    }
+
+    private func colorForType(_ type: ResponseType) -> Color {
+        switch type {
+        case .present: return .green
+        case .returned: return .orange
+        case .missed: return .gray
+        }
+    }
+
+    private func relativeTime(from date: Date, now: Date) -> String {
+        let seconds = Int(now.timeIntervalSince(date))
+        if seconds < 60 { return "\(seconds)s ago" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        return "\(hours)h ago"
     }
 }
 
