@@ -1,7 +1,7 @@
 # Awareness Anchor - Project Status
 
-**Last Updated:** 2025-02-05
-**Current Phase:** 3 (Statistics & Optimization) - Time-in-state estimation complete, Phase 2 optimization planned
+**Last Updated:** 2025-02-10
+**Current Phase:** 3 (Statistics & Optimization) - Time-in-state estimation complete, last response quick-edit shipped, Phase 2 optimization planned
 
 ---
 
@@ -17,21 +17,19 @@ Native macOS menu bar app for mindfulness bell reminders. Plays Tibetan bowl sou
 - SQLite persistence stores sessions and events
 - Screen edge glow shows direction-aware feedback (gradient + wink animation)
 - Time-in-state estimation with autocorrelation-adjusted confidence intervals
+- Last response quick-edit panel (one-click correction with DB audit trail)
 - Settings panel functional with Calibrate tab
 
 ### Active Work
 
 1. **Phase 2 Awareness Optimization** (planned, not started)
    - Branch: `phase2-awareness-optimization` (not yet created)
-   - Kaplan-Meier survival estimation for awareness duration
-   - Optimal chime frequency recommendation
-   - Plan at `.claude/plans/steady-enchanting-bentley.md`
-
-2. **Calibration View Refinements** (just completed)
-   - Reticle on frustum projection plane (head pose) / cursor arrow (mouse)
-   - Intensity-driven frustum face opacity
-   - Grayscale preview until tracking ready
-   - 0.5s debounced input source switching
+   - Kaplan-Meier survival estimation for awareness episode duration
+   - Dynamic interval adjustment keyed on episode duration (not awareness rate)
+   - Key insight: interval ≈ 70-80% of median episode duration; duration is the bottleneck
+   - Data analysis: current 90s interval → ~65% awareness; 60s would → ~85%
+   - Plan at `~/.claude/plans/steady-enchanting-bentley.md`
+   - Session analysis at `docs/archive/sessions/2025-02-10-quick-edit-and-optimization-analysis.md`
 
 ---
 
@@ -47,6 +45,7 @@ Native macOS menu bar app for mindfulness bell reminders. Plays Tibetan bowl sou
 | Input handling | InputCoordinator (unified) | Motion-based precedence between head pose and mouse |
 | Screen glow | Pure Core Animation (CAGradientLayer) | SwiftUI in overlay windows crashes (see DEAD_ENDS) |
 | Statistics | PASTA theorem + Wilson CI | Unbiased time proportion with autocorrelation correction |
+| Optimization key metric | Awareness episode duration (KM) | Duration drives interval adjustment; rate alone is insufficient |
 
 ---
 
@@ -60,7 +59,7 @@ AwarenessAnchor/
     ChimeEvent.swift           # Event data model (present/returned/missed)
     Session.swift              # Session data model
   Views/
-    MenuBarView.swift          # Main popover UI + debug panel
+    MenuBarView.swift          # Main popover UI, last response quick-edit
     SettingsView.swift         # Settings tabs (General, Calibrate, Stats)
     StatsView.swift            # Time-in-awareness card, response distribution, practice time
     HeadPoseSceneView.swift    # SceneKit 3D calibration visualization

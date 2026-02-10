@@ -18,6 +18,7 @@
 		009 /* AudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109 /* AudioPlayer.swift */; };
 		010 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110 /* HotkeyManager.swift */; };
 		011 /* DataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111 /* DataStore.swift */; };
+		A10000000000000000000002 /* AwarenessOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* AwarenessOptimizer.swift */; };
 		012 /* HeadPoseDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112 /* HeadPoseDetector.swift */; };
 		013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 115 /* Assets.xcassets */; };
 		014 /* tibetan-bowl-rubbing-rim.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 116 /* tibetan-bowl-rubbing-rim.mp3 */; };
@@ -45,6 +46,7 @@
 		109 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
 		110 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		111 /* DataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataStore.swift; sourceTree = "<group>"; };
+		A10000000000000000000001 /* AwarenessOptimizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AwarenessOptimizer.swift; sourceTree = "<group>"; };
 		112 /* HeadPoseDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadPoseDetector.swift; sourceTree = "<group>"; };
 		113 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		114 /* AwarenessAnchor.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AwarenessAnchor.entitlements; sourceTree = "<group>"; };
@@ -132,6 +134,7 @@
 				109 /* AudioPlayer.swift */,
 				110 /* HotkeyManager.swift */,
 				111 /* DataStore.swift */,
+				A10000000000000000000001 /* AwarenessOptimizer.swift */,
 				112 /* HeadPoseDetector.swift */,
 				121 /* Logger.swift */,
 				124 /* MouseEdgeDetector.swift */,
@@ -245,6 +248,7 @@
 				009 /* AudioPlayer.swift in Sources */,
 				010 /* HotkeyManager.swift in Sources */,
 				011 /* DataStore.swift in Sources */,
+				A10000000000000000000002 /* AwarenessOptimizer.swift in Sources */,
 				012 /* HeadPoseDetector.swift in Sources */,
 				019 /* Logger.swift in Sources */,
 				020 /* HeadPoseCalibrationView.swift in Sources */,

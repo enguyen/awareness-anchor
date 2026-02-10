@@ -585,6 +585,86 @@ extension DataStore {
         return (low, high)
     }
 
+    // MARK: - Optimization Statistics
+
+    func getOptimizationStats(for period: StatsPeriod, currentIntervalSeconds: Double, responseWindowSeconds: Double) -> OptimizationResult {
+        let events = getChronologicalEvents(for: period)
+        let sessions = getSessionsForPeriod(period)
+
+        return AwarenessOptimizer.analyze(
+            events: events,
+            sessions: sessions,
+            currentIntervalSeconds: currentIntervalSeconds,
+            responseWindowSeconds: responseWindowSeconds
+        )
+    }
+
+    func getChronologicalEvents(for period: StatsPeriod) -> [ChimeEvent] {
+        let (startDate, endDate) = period.dateRange
+
+        let sql = """
+            SELECT id, timestamp, response_type, response_time_ms, session_id, original_response_type, corrected_at
+            FROM chime_events
+            WHERE timestamp >= ? AND timestamp < ?
+            ORDER BY timestamp ASC;
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_double(statement, 1, startDate.timeIntervalSince1970)
+        sqlite3_bind_double(statement, 2, endDate.timeIntervalSince1970)
+
+        var events: [ChimeEvent] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let event = parseChimeEventRow(statement) {
+                events.append(event)
+            }
+        }
+
+        return events
+    }
+
+    func getSessionsForPeriod(_ period: StatsPeriod) -> [Session] {
+        let (startDate, endDate) = period.dateRange
+
+        let sql = """
+            SELECT id, start_time, end_time, avg_interval_seconds
+            FROM sessions
+            WHERE start_time >= ? AND start_time < ?
+            ORDER BY start_time ASC;
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_double(statement, 1, startDate.timeIntervalSince1970)
+        sqlite3_bind_double(statement, 2, endDate.timeIntervalSince1970)
+
+        var sessions: [Session] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let idString = String(cString: sqlite3_column_text(statement, 0))
+            let startTime = Date(timeIntervalSince1970: sqlite3_column_double(statement, 1))
+            let endTime: Date? = sqlite3_column_type(statement, 2) != SQLITE_NULL
+                ? Date(timeIntervalSince1970: sqlite3_column_double(statement, 2))
+                : nil
+            let avgInterval = sqlite3_column_double(statement, 3)
+
+            if let id = UUID(uuidString: idString) {
+                sessions.append(Session(
+                    id: id,
+                    startTime: startTime,
+                    endTime: endTime,
+                    avgIntervalSeconds: avgInterval
+                ))
+            }
+        }
+
+        return sessions
+    }
+
     /// Get total practice time (sum of completed session durations) for a period
     func getTotalPracticeTime(for period: StatsPeriod) -> TimeInterval {
         let (startDate, endDate) = period.dateRange
