@@ -118,6 +118,11 @@ class HeadPoseDetector: NSObject, ObservableObject {
     // External cooldown flag - set by AppDelegate to prevent triggers during cooldown period
     @Published var isInCooldown: Bool = false
 
+    // Face check mode: briefly start camera to detect face presence before chime
+    private var isCheckingForFace = false
+    private var faceCheckCompletion: ((Bool) -> Void)?
+    private var faceCheckTimer: Timer?
+
     func startDetection() {
         guard captureSession == nil else { return }
 
@@ -146,11 +151,21 @@ class HeadPoseDetector: NSObject, ObservableObject {
     }
 
     func stopDetection() {
+        cancelFaceCheck()
         captureSession?.stopRunning()
         captureSession = nil
         videoOutput = nil
         isActive = false
         isWindowActive = false
+    }
+
+    private func cancelFaceCheck() {
+        if isCheckingForFace {
+            isCheckingForFace = false
+            faceCheckCompletion = nil
+            faceCheckTimer?.invalidate()
+            faceCheckTimer = nil
+        }
     }
 
     func activateForWindow() {
@@ -277,9 +292,58 @@ class HeadPoseDetector: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Face Check (pre-chime gating)
+
+    /// Briefly start camera to check if a face is present before playing a chime.
+    /// Calls completion(true) as soon as a face is detected, or completion(false) on timeout.
+    /// Camera stays running on success (response window will take over via activateForWindow).
+    func checkForFace(timeout: TimeInterval, completion: @escaping (Bool) -> Void) {
+        guard isActive, captureSession != nil else {
+            appLog("[HP] checkForFace: detector not active")
+            completion(false)
+            return
+        }
+
+        appLog("[HP] Starting face check (timeout: \(timeout)s)")
+        isCheckingForFace = true
+        faceCheckCompletion = completion
+
+        // Start camera
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.captureSession?.startRunning()
+            appLog("[HP] Face check camera started")
+        }
+
+        // Set timeout
+        faceCheckTimer = Timer.scheduledTimer(withTimeInterval: timeout, repeats: false) { [weak self] _ in
+            guard let self = self, self.isCheckingForFace else { return }
+            appLog("[HP] Face check timed out after \(timeout)s")
+            self.isCheckingForFace = false
+            self.faceCheckCompletion = nil
+            self.captureSession?.stopRunning()
+            DispatchQueue.main.async {
+                completion(false)
+            }
+        }
+    }
+
+    /// Called when a face is found during face check mode
+    private func faceCheckFound() {
+        guard isCheckingForFace, let completion = faceCheckCompletion else { return }
+        appLog("[HP] Face check succeeded - face detected")
+        isCheckingForFace = false
+        faceCheckCompletion = nil
+        faceCheckTimer?.invalidate()
+        faceCheckTimer = nil
+        // Don't stop camera - response window will take over
+        DispatchQueue.main.async {
+            completion(true)
+        }
+    }
+
     private func processFrame(_ pixelBuffer: CVPixelBuffer) {
-        // In calibration mode, keep processing even after response
-        guard isWindowActive, (isCalibrationMode || !hasRespondedThisWindow) else { return }
+        // Allow processing during face check, active window, or calibration
+        guard isCheckingForFace || (isWindowActive && (isCalibrationMode || !hasRespondedThisWindow)) else { return }
 
         // Use face rectangles request which provides pitch, yaw, roll
         let faceRequest = VNDetectFaceRectanglesRequest { [weak self] request, error in
@@ -296,6 +360,15 @@ class HeadPoseDetector: NSObject, ObservableObject {
                     self.faceDetected = false
                     self.currentGazeEdge = .none
                 }
+                return
+            }
+
+            // In face check mode, only detect presence — don't analyze pose
+            if self.isCheckingForFace {
+                DispatchQueue.main.async {
+                    self.faceDetected = true
+                }
+                self.faceCheckFound()
                 return
             }
 

@@ -242,6 +242,9 @@ class AppState: ObservableObject {
 
     // MARK: - Private Methods
 
+    /// How long to wait for face detection before skipping a chime (seconds)
+    private let faceDetectionTimeout: TimeInterval = 3.0
+
     private func handleChime() {
         // Block if already in response window or chime audio still playing
         guard !isInResponseWindow, !audioPlayer.isChimePlaying else {
@@ -249,6 +252,26 @@ class AppState: ObservableObject {
             return
         }
 
+        let headPoseEnabled = UserDefaults.standard.bool(forKey: "headPoseEnabled")
+
+        if headPoseEnabled {
+            // Wait for face detection before playing chime
+            appLog("[AppState] Chime pending - waiting for face detection", category: "AppState")
+            headPoseDetector.checkForFace(timeout: faceDetectionTimeout) { [weak self] faceDetected in
+                guard let self = self else { return }
+                if faceDetected {
+                    appLog("[AppState] Face detected - proceeding with chime", category: "AppState")
+                    self.proceedWithChime()
+                } else {
+                    appLog("[AppState] No face detected - skipping chime", category: "AppState")
+                }
+            }
+        } else {
+            proceedWithChime()
+        }
+    }
+
+    private func proceedWithChime() {
         lastChimeTime = Date()
         pendingChimeId = UUID()
         audioPlayer.playRandomChime()

@@ -1,7 +1,7 @@
 # Awareness Anchor - Project Status
 
-**Last Updated:** 2025-02-10
-**Current Phase:** 3 (Statistics & Optimization) - Time-in-state estimation complete, last response quick-edit shipped, Phase 2 optimization planned
+**Last Updated:** 2025-02-11
+**Current Phase:** 3 (Statistics & Optimization) - Phase 2 optimization shipped, face-detection chime gating added
 
 ---
 
@@ -19,17 +19,8 @@ Native macOS menu bar app for mindfulness bell reminders. Plays Tibetan bowl sou
 - Time-in-state estimation with autocorrelation-adjusted confidence intervals
 - Last response quick-edit panel (one-click correction with DB audit trail)
 - Settings panel functional with Calibrate tab
-
-### Active Work
-
-1. **Phase 2 Awareness Optimization** (planned, not started)
-   - Branch: `phase2-awareness-optimization` (not yet created)
-   - Kaplan-Meier survival estimation for awareness episode duration
-   - Dynamic interval adjustment keyed on episode duration (not awareness rate)
-   - Key insight: interval ≈ 70-80% of median episode duration; duration is the bottleneck
-   - Data analysis: current 90s interval → ~65% awareness; 60s would → ~85%
-   - Plan at `~/.claude/plans/steady-enchanting-bentley.md`
-   - Session analysis at `docs/archive/sessions/2025-02-10-quick-edit-and-optimization-analysis.md`
+- Phase 2 optimization: KM survival, equilibrium model, 4 StatsView cards
+- Face-detection gating: chime only plays if camera detects a face (3s timeout)
 
 ---
 
@@ -68,7 +59,8 @@ AwarenessAnchor/
     AudioPlayer.swift          # Sound playback (overlap prevention)
     ChimeScheduler.swift       # Random interval timing
     DataStore.swift            # SQLite persistence + time estimation statistics
-    HeadPoseDetector.swift     # Vision framework face detection
+    AwarenessOptimizer.swift   # KM survival, equilibrium model, optimization
+    HeadPoseDetector.swift     # Vision framework face detection + pre-chime face check
     MouseEdgeDetector.swift    # Mouse proximity to screen edges
     InputCoordinator.swift     # Unified input: speed-based source precedence
     HotkeyManager.swift        # Global keyboard shortcuts
@@ -94,14 +86,18 @@ AwarenessAnchor/
 - PBR materials on custom quad geometry ignored transparency settings
 - Fix: Use .constant lighting + .alpha blend + writesToDepthBuffer=false
 
+### Present Gesture Hard to Trigger
+- Mouse triggerZonePixels was 10px (too small for reliable dwell); widened to 50px
+- Head pose yawNoiseThreshold was 0.10 (dead zone blocked tilt-up); loosened to 0.15
+
 ---
 
 ## Roadmap
 
-### Phase 2 Optimization (Next)
-- [ ] AwarenessOptimizer.swift: Kaplan-Meier survival, chime frequency optimization
-- [ ] DataStore bridge methods for optimization stats
-- [ ] StatsView cards: chime effectiveness, awareness duration, optimal frequency, trend
+### Phase 2 Optimization (Complete)
+- [x] AwarenessOptimizer.swift: Kaplan-Meier survival, chime frequency optimization
+- [x] DataStore bridge methods for optimization stats
+- [x] StatsView cards: chime effectiveness, awareness duration, optimal frequency, trend
 
 ### Phase 4: Extensions (Backlog)
 - Apple Watch companion
