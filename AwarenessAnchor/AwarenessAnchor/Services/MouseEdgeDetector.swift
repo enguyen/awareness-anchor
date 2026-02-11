@@ -50,7 +50,7 @@ class MouseEdgeDetector: ObservableObject {
     let glowZonePixels: CGFloat = 150
 
     /// Size of the trigger zone at screen edge where dwell counting starts
-    let triggerZonePixels: CGFloat = 10
+    let triggerZonePixels: CGFloat = 50
 
     /// Minimum distance from edge to be considered "neutral" (for return-to-neutral detection)
     let neutralZonePixels: CGFloat = 200

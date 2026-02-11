@@ -80,7 +80,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
         set { UserDefaults.standard.set(Double(newValue), forKey: "yawThreshold") }
     }
     var yawNoiseThreshold: Float {
-        get { Float(UserDefaults.standard.double(forKey: "yawNoiseThreshold").nonZeroOr(0.10)) }
+        get { Float(UserDefaults.standard.double(forKey: "yawNoiseThreshold").nonZeroOr(0.15)) }
         set { UserDefaults.standard.set(Double(newValue), forKey: "yawNoiseThreshold") }
     }
 
