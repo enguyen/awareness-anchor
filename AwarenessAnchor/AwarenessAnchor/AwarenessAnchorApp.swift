@@ -520,13 +520,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 CATransaction.begin()
                 CATransaction.setCompletionBlock { [weak self] in
-                    window.orderOut(nil)
+                    guard let self = self else { return }
                     view.layer?.removeAnimation(forKey: "pulse")
                     view.alphaValue = 1.0
                     // IMPORTANT: Reset the glow color to transparent to prevent white flash on next show
                     view.updateGlow(color: .clear, direction: view.currentDirection, intensity: 0, maxOpacity: 0)
-                    self?.activeWinkEdge = .none
-                    self?.isWinkAnimating = false
+                    self.activeWinkEdge = .none
+                    self.isWinkAnimating = false
+                    // Clear ALL glow windows and smoothed intensities to prevent stale highlights
+                    self.hideAllGlowWindows()
+                    self.smoothedTopIntensity = 0
+                    self.smoothedLeftIntensity = 0
+                    self.smoothedRightIntensity = 0
                 }
                 view.layer?.add(pulseAnimation, forKey: "pulse")
                 CATransaction.commit()
