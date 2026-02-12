@@ -70,6 +70,10 @@ class MouseEdgeDetector: ObservableObject {
     private(set) var lastMousePosition: CGPoint?
     private(set) var lastUpdateTime: Date?
 
+    // Orthogonal stillness tracking for dwell
+    private var previousDwellMousePosition: CGPoint?
+    private let orthogonalSettlePixelsPerEvent: CGFloat = 3.0
+
     // MARK: - Dwell Time (reads from HeadPoseDetector's UserDefaults)
 
     var dwellTime: Float {
@@ -175,6 +179,7 @@ class MouseEdgeDetector: ObservableObject {
         dwellStartTime = nil
         currentDwellEdge = .none
         requiresReturnToNeutral = false
+        previousDwellMousePosition = nil
     }
 
     private func processMouseEvent(_ event: NSEvent) {
@@ -259,10 +264,10 @@ class MouseEdgeDetector: ObservableObject {
 
         // Handle dwell tracking (only when window is active for triggers)
         // Also handle return-to-neutral detection (needed even after window deactivates)
-        processDwellLogic(detectedEdge: detectedEdge, isInNeutralZone: isInNeutralZone)
+        processDwellLogic(detectedEdge: detectedEdge, isInNeutralZone: isInNeutralZone, mouseLocation: mouseLocation)
     }
 
-    private func processDwellLogic(detectedEdge: GazeEdge, isInNeutralZone: Bool) {
+    private func processDwellLogic(detectedEdge: GazeEdge, isInNeutralZone: Bool, mouseLocation: CGPoint) {
         let currentDwellTime = dwellTime
 
         if detectedEdge != .none {
@@ -275,8 +280,22 @@ class MouseEdgeDetector: ObservableObject {
             guard isWindowActive || isCalibrationMode else { return }
 
             if detectedEdge == currentDwellEdge, let startTime = dwellStartTime {
+                // Orthogonal stillness: pause dwell if mouse is still sliding on the other axis
+                if let prev = previousDwellMousePosition {
+                    let orthogonalMovement: CGFloat
+                    if detectedEdge == .top {
+                        orthogonalMovement = abs(mouseLocation.x - prev.x)
+                    } else {
+                        orthogonalMovement = abs(mouseLocation.y - prev.y)
+                    }
+                    if orthogonalMovement > orthogonalSettlePixelsPerEvent {
+                        dwellStartTime = Date()  // Push dwell forward — still sliding
+                    }
+                }
+                previousDwellMousePosition = mouseLocation
+
                 // Same edge, check dwell progress
-                let elapsed = Float(Date().timeIntervalSince(startTime))
+                let elapsed = Float(Date().timeIntervalSince(dwellStartTime ?? startTime))
                 let progress = min(elapsed / currentDwellTime, 1.0)
 
                 DispatchQueue.main.async {
@@ -312,6 +331,7 @@ class MouseEdgeDetector: ObservableObject {
                 // New edge detected, start dwell timer
                 dwellStartTime = Date()
                 currentDwellEdge = detectedEdge
+                previousDwellMousePosition = mouseLocation
                 DispatchQueue.main.async {
                     self.dwellProgress = 0
                 }

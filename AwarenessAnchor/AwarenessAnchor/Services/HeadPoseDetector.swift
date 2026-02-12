@@ -123,6 +123,15 @@ class HeadPoseDetector: NSObject, ObservableObject {
     private var faceCheckCompletion: ((Bool) -> Void)?
     private var faceCheckTimer: Timer?
 
+    // Pre-chime pose capture: baseline from face detection before chime plays
+    private var preChimePitch: Float?
+    private var preChimeYaw: Float?
+
+    // Orthogonal stillness tracking: frame-to-frame delta rates
+    private var previousPitchDelta: Float?
+    private var previousSignedYawDelta: Float?
+    private let orthogonalSettleThreshold: Float = 0.02  // radians per frame
+
     func startDetection() {
         guard captureSession == nil else { return }
 
@@ -187,10 +196,27 @@ class HeadPoseDetector: NSObject, ObservableObject {
         dwellStartTime = nil
         currentDwellPose = .neutral
         requiresReturnToNeutral = false
+        previousPitchDelta = nil
+        previousSignedYawDelta = nil
+
+        // Use pre-chime pose as baseline if available (camera was already running for face check)
+        if let pitch = preChimePitch, let yaw = preChimeYaw {
+            smoothedPitch = pitch
+            smoothedYaw = yaw
+            baselinePitch = pitch
+            baselineYaw = yaw
+            isFirstReading = false
+            framesToSkip = 0  // Camera already stabilized from face check
+            appLog("[HP]Using pre-chime baseline: pitch=\(pitch), yaw=\(yaw)")
+            preChimePitch = nil
+            preChimeYaw = nil
+        }
 
         DispatchQueue.main.async {
-            self.debugBaseline = "Calibrating..."
-            self.faceDetected = false
+            self.debugBaseline = self.baselinePitch != nil
+                ? String(format: "Baseline: P=%.2f, Y=%.2f", self.baselinePitch ?? 0, self.baselineYaw ?? 0)
+                : "Calibrating..."
+            self.faceDetected = self.baselinePitch != nil  // Already detected if we have pre-chime data
             self.dwellProgress = 0
             self.isAwaitingReturnToNeutral = false
         }
@@ -242,6 +268,8 @@ class HeadPoseDetector: NSObject, ObservableObject {
         dwellStartTime = nil
         currentDwellPose = .neutral
         requiresReturnToNeutral = false
+        previousPitchDelta = nil
+        previousSignedYawDelta = nil
 
         DispatchQueue.main.async {
             self.isCalibrationActive = true
@@ -284,6 +312,8 @@ class HeadPoseDetector: NSObject, ObservableObject {
         dwellStartTime = nil
         currentDwellPose = .neutral
         requiresReturnToNeutral = false
+        previousPitchDelta = nil
+        previousSignedYawDelta = nil
         DispatchQueue.main.async {
             self.debugBaseline = "Waiting for baseline..."
             self.debugPitch = 0
@@ -363,8 +393,13 @@ class HeadPoseDetector: NSObject, ObservableObject {
                 return
             }
 
-            // In face check mode, only detect presence — don't analyze pose
+            // In face check mode, detect presence and capture pose for pre-chime baseline
             if self.isCheckingForFace {
+                if let p = face.pitch?.floatValue, let y = face.yaw?.floatValue {
+                    self.preChimePitch = p
+                    self.preChimeYaw = y
+                    appLog("[HP] Pre-chime pose captured: pitch=\(p), yaw=\(y)")
+                }
                 DispatchQueue.main.async {
                     self.faceDetected = true
                 }
@@ -438,6 +473,12 @@ class HeadPoseDetector: NSObject, ObservableObject {
         let signedYawDelta = smoothedYaw - (baselineYaw ?? 0)
         let yawDelta = abs(signedYawDelta)
 
+        // Orthogonal stillness: track frame-to-frame rate of change
+        let pitchSpeed = abs(pitchDelta - (previousPitchDelta ?? pitchDelta))
+        let yawSpeed = abs(signedYawDelta - (previousSignedYawDelta ?? signedYawDelta))
+        previousPitchDelta = pitchDelta
+        previousSignedYawDelta = signedYawDelta
+
         // Update debug values and gaze edge on main thread
         DispatchQueue.main.async {
             self.faceDetected = true
@@ -504,18 +545,13 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
         // Gesture priority: YAW takes precedence over PITCH
         //
-        // Rationale: When using an external monitor above the webcam, turning
-        // your head left/right while looking at the monitor creates apparent
-        // pitch movement from the camera's perspective. A deliberate "turn"
-        // gesture should always register as "returned", not "present".
-        //
-        // Only register "present" (tilt up) when there's minimal yaw movement,
-        // indicating a pure vertical head tilt.
+        // When yaw exceeds its threshold, it wins (turnLeftRight). Otherwise,
+        // pitch is evaluated independently. The orthogonal stillness check
+        // prevents false triggers during active re-centering movement.
 
         // Get current thresholds
         let currentPitchThreshold = pitchThreshold
         let currentYawThreshold = yawThreshold
-        let currentYawNoiseThreshold = yawNoiseThreshold
         let currentDwellTime = dwellTime
 
         // Determine which pose is detected (if any)
@@ -524,8 +560,8 @@ class HeadPoseDetector: NSObject, ObservableObject {
         if yawDelta > currentYawThreshold {
             // Turning head left/right -> "Returned to awareness"
             detectedPose = .turnLeftRight
-        } else if pitchDelta < -currentPitchThreshold && yawDelta < currentYawNoiseThreshold {
-            // Pure tilt up with minimal turning -> "Already present"
+        } else if pitchDelta < -currentPitchThreshold {
+            // Tilt up -> "Already present" (orthogonal stillness gates the dwell)
             detectedPose = .tiltUp
         }
 
@@ -537,8 +573,19 @@ class HeadPoseDetector: NSObject, ObservableObject {
             }
 
             if detectedPose == currentDwellPose, let startTime = dwellStartTime {
+                // Orthogonal stillness: pause dwell if user is still re-centering on the other axis
+                let isSettled: Bool
+                if detectedPose == .tiltUp {
+                    isSettled = yawSpeed < orthogonalSettleThreshold
+                } else {
+                    isSettled = pitchSpeed < orthogonalSettleThreshold
+                }
+                if !isSettled {
+                    dwellStartTime = Date()  // Push dwell forward — still re-centering
+                }
+
                 // Same pose, check if dwell time exceeded
-                let elapsed = Float(Date().timeIntervalSince(startTime))
+                let elapsed = Float(Date().timeIntervalSince(dwellStartTime ?? startTime))
                 let progress = min(elapsed / currentDwellTime, 1.0)
 
                 DispatchQueue.main.async {
