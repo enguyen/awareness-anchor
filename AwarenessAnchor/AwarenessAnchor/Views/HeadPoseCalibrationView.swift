@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct HeadPoseCalibrationView: View {
     @EnvironmentObject var appState: AppState
@@ -17,25 +18,27 @@ struct HeadPoseCalibrationView: View {
     private var isTestActive: Bool { appState.inputCoordinator.isCalibrationActive }
 
     // Threshold bindings
-    @State private var pitchThreshold: Float = 0.12
-    @State private var yawThreshold: Float = 0.20
+    @State private var pitchThreshold: Float = 0.16
+    @State private var yawThreshold: Float = 0.28
     @State private var smoothingFactor: Float = 0.5
     @State private var dwellTime: Float = 0.2
+    @State private var sensitivityMultiplier: Float = 1.3
+    @State private var calibrationChimePlayer: AVAudioPlayer?
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
-                // Response Preview Section
-                VStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 24) {
+                // Left column: Response Preview + button
+                VStack(spacing: 12) {
                     Text("Response Preview")
                         .font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                     if headPoseEnabled {
                         ZStack(alignment: .top) {
-                            // Main 3D SceneKit visualization (only when head pose is enabled)
                             HeadPoseSceneView(
-                                pitchThreshold: pitchThreshold,
-                                yawThreshold: yawThreshold,
+                                pitchThreshold: detector.effectivePitchThreshold,
+                                yawThreshold: detector.effectiveYawThreshold,
                                 deltaPitch: deltaPitch,
                                 signedYawDelta: signedYawDelta,
                                 dwellProgress: appState.inputCoordinator.dwellProgress,
@@ -50,10 +53,9 @@ struct HeadPoseCalibrationView: View {
                                 normalizedMouseY: appState.mouseEdgeDetector.normalizedYPosition
                             )
                             .frame(maxWidth: .infinity)
-                            .frame(height: 230)
+                            .frame(height: 280)
                             .cornerRadius(12)
 
-                            // Triggered feedback banner at top (or Initializing during cooldown)
                             if appState.inputCoordinator.isInCooldown {
                                 InitializingBanner()
                                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -63,14 +65,13 @@ struct HeadPoseCalibrationView: View {
                             }
                         }
                         .frame(maxWidth: .infinity)
-                        .frame(height: 230)
+                        .frame(height: 280)
                         .saturation(isTestActive && !appState.inputCoordinator.isInCooldown && detector.faceDetected ? 1 : 0)
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
                                 .stroke(Color(NSColor.separatorColor), lineWidth: 1)
                         )
                     } else {
-                        // Mouse-only mode: simplified preview
                         ZStack(alignment: .top) {
                             MouseOnlyPreview(
                                 isTestActive: isTestActive,
@@ -78,10 +79,9 @@ struct HeadPoseCalibrationView: View {
                                 dwellProgress: appState.inputCoordinator.dwellProgress
                             )
                             .frame(maxWidth: .infinity)
-                            .frame(height: 230)
+                            .frame(height: 280)
                             .cornerRadius(12)
 
-                            // Triggered feedback banner
                             if appState.inputCoordinator.isInCooldown {
                                 InitializingBanner()
                                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -91,7 +91,7 @@ struct HeadPoseCalibrationView: View {
                             }
                         }
                         .frame(maxWidth: .infinity)
-                        .frame(height: 230)
+                        .frame(height: 280)
                         .saturation(isTestActive && !appState.inputCoordinator.isInCooldown ? 1 : 0)
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
@@ -129,82 +129,103 @@ struct HeadPoseCalibrationView: View {
                         }
                     }
                     .font(.caption)
-                }
 
-                // Preview Button
-                Button(action: toggleTest) {
-                    HStack {
-                        Image(systemName: isTestActive ? "stop.circle.fill" : "play.circle.fill")
-                        Text(isTestActive ? "Stop Preview" : "Preview Responses")
+                    Button(action: toggleTest) {
+                        HStack {
+                            Image(systemName: isTestActive ? "stop.circle.fill" : "play.circle.fill")
+                            Text(isTestActive ? "Stop Preview" : "Preview Responses")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(isTestActive ? Color.red.opacity(0.2) : Color.green.opacity(0.2))
+                        .foregroundColor(isTestActive ? .red : .green)
+                        .cornerRadius(8)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(isTestActive ? Color.red.opacity(0.2) : Color.green.opacity(0.2))
-                    .foregroundColor(isTestActive ? .red : .green)
-                    .cornerRadius(8)
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
 
-                // Threshold Sliders (only for head pose mode)
-                if headPoseEnabled {
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Head Pose Thresholds")
+                // Right column: all settings sliders
+                VStack(alignment: .leading, spacing: 20) {
+                    // Stability Settings
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Stability")
                             .font(.headline)
 
-                        ThresholdSlider(
-                            icon: "arrow.left.arrow.right",
-                            color: .orange,
-                            label: "Turn head (Returned to Awareness)",
-                            value: $yawThreshold,
-                            range: 0.05...0.50,
-                            hint: "Higher = wider frustum = more turn needed",
-                            onChanged: { detector.yawThreshold = $0 }
-                        )
+                        if headPoseEnabled {
+                            ThresholdSlider(
+                                icon: "waveform.path.ecg",
+                                color: .blue,
+                                label: "Smoothing",
+                                value: $smoothingFactor,
+                                range: 0.0...1.0,
+                                hint: "Higher = smoother but laggier",
+                                onChanged: { detector.smoothingFactor = $0 }
+                            )
+
+                            ThresholdSlider(
+                                icon: "dial.medium",
+                                color: .green,
+                                label: "Sensitivity",
+                                value: $sensitivityMultiplier,
+                                range: 0.5...2.0,
+                                hint: "Higher = triggers earlier",
+                                onChanged: { detector.autoSensitivityMultiplier = $0 }
+                            )
+                        }
 
                         ThresholdSlider(
-                            icon: "arrow.up",
-                            color: .green,
-                            label: "Tilt head up (Already Present)",
-                            value: $pitchThreshold,
-                            range: 0.05...0.50,
-                            hint: "Higher = taller frustum = more tilt needed",
-                            onChanged: { detector.pitchThreshold = $0 }
+                            icon: "timer",
+                            color: .purple,
+                            label: "Dwell Time",
+                            value: $dwellTime,
+                            range: 0.0...0.5,
+                            hint: "\(String(format: "%.2fs", dwellTime)) hold at edge",
+                            onChanged: { detector.dwellTime = $0 }
                         )
                     }
-                }
 
-                Divider()
-
-                // Stability Settings (shared between inputs)
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Stability")
-                        .font(.headline)
-
+                    // Head Pose Thresholds
                     if headPoseEnabled {
-                        ThresholdSlider(
-                            icon: "waveform.path.ecg",
-                            color: .blue,
-                            label: "Smoothing",
-                            value: $smoothingFactor,
-                            range: 0.0...1.0,
-                            hint: "Higher = smoother but laggier tracking",
-                            onChanged: { detector.smoothingFactor = $0 }
-                        )
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Head Pose Thresholds")
+                                .font(.headline)
+
+                            if detector.isAutoThresholdActive {
+                                Text("Thresholds only need to be adjusted when an external monitor is connected. They are set automatically when using the laptop screen only.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            ThresholdSlider(
+                                icon: "arrow.left.arrow.right",
+                                color: .orange,
+                                label: "Turn head (Returned)",
+                                value: $yawThreshold,
+                                range: 0.05...0.50,
+                                hint: "Higher = wider frustum = more turn needed",
+                                onChanged: { detector.yawThreshold = $0 }
+                            )
+                            .opacity(detector.isAutoThresholdActive ? 0.4 : 1.0)
+                            .disabled(detector.isAutoThresholdActive)
+
+                            ThresholdSlider(
+                                icon: "arrow.up",
+                                color: .green,
+                                label: "Tilt head up (Present)",
+                                value: $pitchThreshold,
+                                range: 0.05...0.50,
+                                hint: "Higher = taller frustum = more tilt needed",
+                                onChanged: { detector.pitchThreshold = $0 }
+                            )
+                            .opacity(detector.isAutoThresholdActive ? 0.4 : 1.0)
+                            .disabled(detector.isAutoThresholdActive)
+                        }
                     }
-
-                    ThresholdSlider(
-                        icon: "timer",
-                        color: .purple,
-                        label: "Dwell Time",
-                        value: $dwellTime,
-                        range: 0.0...0.5,
-                        hint: "\(String(format: "%.2fs", dwellTime)) - how long to hold at edge/threshold",
-                        onChanged: { detector.dwellTime = $0 }
-                    )
                 }
-
+                .frame(maxWidth: .infinity)
             }
             .padding(24)
         }
@@ -213,6 +234,7 @@ struct HeadPoseCalibrationView: View {
             yawThreshold = detector.yawThreshold
             smoothingFactor = detector.smoothingFactor
             dwellTime = detector.dwellTime
+            sensitivityMultiplier = detector.autoSensitivityMultiplier
 
             // Head pose calibration updates
             detector.onCalibrationUpdate = { _, _, dPitch, _, signedYaw in
@@ -238,12 +260,23 @@ struct HeadPoseCalibrationView: View {
             detector.onCalibrationTriggered = nil
             appState.mouseEdgeDetector.onCalibrationTriggered = nil
         }
+        .onChange(of: appState.inputCoordinator.isInCooldown) { isCooling in
+            // Play chime when cooldown ends (calibration resets)
+            if !isCooling && isTestActive {
+                playCalibrationChime()
+            }
+        }
     }
 
     private func handleCalibrationTrigger(pose: HeadPose, edge: GazeEdge) {
         withAnimation(.spring(response: 0.3)) {
             triggeredPose = pose
             showTriggeredFeedback = true
+        }
+
+        // Play system alert sound if enabled
+        if UserDefaults.standard.bool(forKey: "playSystemSoundOnTrigger") {
+            NSSound.beep()
         }
 
         // Trigger screen glow for calibration feedback (pass edge for correct direction)
@@ -270,7 +303,16 @@ struct HeadPoseCalibrationView: View {
             signedYawDelta = 0
             showTriggeredFeedback = false
             triggeredPose = nil
+
+            playCalibrationChime()
             appState.inputCoordinator.startCalibration()
+        }
+    }
+
+    private func playCalibrationChime() {
+        if let url = Bundle.main.url(forResource: "bright-tibetan-bell-ding", withExtension: "mp3") {
+            calibrationChimePlayer = try? AVAudioPlayer(contentsOf: url)
+            calibrationChimePlayer?.play()
         }
     }
 
@@ -463,5 +505,5 @@ struct LegendItem: View {
 #Preview {
     HeadPoseCalibrationView(detector: HeadPoseDetector())
         .environmentObject(AppState.shared)
-        .frame(width: 420, height: 750)
+        .frame(width: 720, height: 620)
 }

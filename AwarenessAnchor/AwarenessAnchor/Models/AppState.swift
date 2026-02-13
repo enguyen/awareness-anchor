@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 class AppState: ObservableObject {
     static let shared = AppState()
@@ -369,6 +370,11 @@ class AppState: ObservableObject {
     }
 
     private func provideFeedback(for type: ResponseType) {
+        // Play system alert sound if enabled
+        if UserDefaults.standard.bool(forKey: "playSystemSoundOnTrigger") {
+            NSSound.beep()
+        }
+
         // Notify listeners (AppDelegate handles visual feedback)
         onResponseRecorded?(type)
     }

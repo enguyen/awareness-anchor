@@ -336,8 +336,8 @@ class InputCoordinator: ObservableObject {
             let pitchDelta = abs(currentPitch - lastPitch)
             let yawDelta = abs(currentYaw - lastYaw)
             // Normalize by threshold to get % of frustum
-            let pitchThreshold = headPoseDetector.pitchThreshold
-            let yawThreshold = headPoseDetector.yawThreshold
+            let pitchThreshold = headPoseDetector.effectivePitchThreshold
+            let yawThreshold = headPoseDetector.effectiveYawThreshold
             let normalizedPitchSpeed = (pitchDelta / pitchThreshold) / deltaTime
             let normalizedYawSpeed = (yawDelta / yawThreshold) / deltaTime
             headSpeed = max(normalizedPitchSpeed, normalizedYawSpeed)

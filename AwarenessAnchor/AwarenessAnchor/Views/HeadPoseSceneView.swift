@@ -188,15 +188,18 @@ struct HeadPoseSceneView: NSViewRepresentable {
             frustumNode.position = SCNVector3(x: 0, y: CGFloat(frustumOffsetY), z: 0)
             scene.rootNode.addChildNode(frustumNode)
 
-            rebuildFrustum(pitchThreshold: 0.12, yawThreshold: 0.20)
+            rebuildFrustum(pitchThreshold: 0.16, yawThreshold: 0.28)
         }
 
         private func rebuildFrustum(pitchThreshold: Float, yawThreshold: Float) {
             frustumNode.childNodes.forEach { $0.removeFromParentNode() }
 
             let nearSize: Float = 0.1
-            let farWidth = yawThreshold * 8
-            let farHeight = pitchThreshold * 6
+            // Uniform scale preserves the threshold aspect ratio
+            // (which in auto mode matches the real screen aspect ratio)
+            let scale: Float = 7.0
+            let farWidth = yawThreshold * scale
+            let farHeight = pitchThreshold * scale
 
             // Cache for reticle positioning
             cachedFarWidth = farWidth
@@ -552,8 +555,8 @@ struct HeadPoseSceneView: NSViewRepresentable {
 
 #Preview {
     HeadPoseSceneView(
-        pitchThreshold: 0.12,
-        yawThreshold: 0.20,
+        pitchThreshold: 0.16,
+        yawThreshold: 0.28,
         deltaPitch: -0.05,
         signedYawDelta: 0.1,
         dwellProgress: 0.3,

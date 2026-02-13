@@ -1,6 +1,7 @@
 import Foundation
 import Vision
 import AVFoundation
+import AppKit
 
 enum HeadPose {
     case neutral
@@ -14,6 +15,61 @@ enum GazeEdge {
     case top      // Looking up
     case left     // Turned left
     case right    // Turned right
+}
+
+/// Geometry helpers for computing head pose thresholds from known laptop screen dimensions.
+struct DisplayGeometry {
+    static let averageFaceWidthMeters: Float = 0.16
+
+    /// True when the currently active screen is the built-in display (camera-to-screen geometry is known).
+    /// Works even when external monitors are connected — only the active screen matters.
+    static var isCurrentScreenBuiltIn: Bool {
+        guard let mainScreen = NSScreen.main else { return false }
+        let screenNumber = mainScreen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
+        return CGDisplayIsBuiltin(screenNumber) != 0
+    }
+
+    /// Physical screen size in meters for the built-in display.
+    static var screenSizeMeters: (width: Float, height: Float)? {
+        // Always use the built-in display dimensions (camera is fixed to it)
+        let builtInID = builtInDisplayID ?? CGMainDisplayID()
+        let sizeMM = CGDisplayScreenSize(builtInID)
+        guard sizeMM.width > 0, sizeMM.height > 0 else { return nil }
+        return (width: Float(sizeMM.width) / 1000.0, height: Float(sizeMM.height) / 1000.0)
+    }
+
+    /// Find the built-in display ID (if any).
+    private static var builtInDisplayID: CGDirectDisplayID? {
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: 16)
+        var displayCount: UInt32 = 0
+        CGGetActiveDisplayList(16, &displayIDs, &displayCount)
+        for i in 0..<Int(displayCount) {
+            if CGDisplayIsBuiltin(displayIDs[i]) != 0 {
+                return displayIDs[i]
+            }
+        }
+        return nil
+    }
+
+    /// Estimate face distance from camera using bounding box width and horizontal FOV.
+    static func estimateFaceDistance(boundingBoxWidth: Float, cameraHFOVDegrees: Float) -> Float {
+        guard boundingBoxWidth > 0 else { return 0 }
+        let halfAngle = (boundingBoxWidth * cameraHFOVDegrees * .pi / 180.0) / 2.0
+        guard halfAngle > 0 else { return 0 }
+        return averageFaceWidthMeters / (2.0 * tan(halfAngle))
+    }
+
+    /// Geometric pitch threshold: angle subtended by half the screen height at the given distance.
+    static func computePitchThreshold(screenHeightMeters: Float, faceDistanceMeters: Float) -> Float {
+        guard faceDistanceMeters > 0 else { return 0 }
+        return atan(screenHeightMeters / 2.0 / faceDistanceMeters)
+    }
+
+    /// Geometric yaw threshold: angle subtended by half the screen width at the given distance.
+    static func computeYawThreshold(screenWidthMeters: Float, faceDistanceMeters: Float) -> Float {
+        guard faceDistanceMeters > 0 else { return 0 }
+        return atan(screenWidthMeters / 2.0 / faceDistanceMeters)
+    }
 }
 
 class HeadPoseDetector: NSObject, ObservableObject {
@@ -72,11 +128,11 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
     // Configurable thresholds - stored in UserDefaults
     var pitchThreshold: Float {
-        get { Float(UserDefaults.standard.double(forKey: "pitchThreshold").nonZeroOr(0.12)) }
+        get { Float(UserDefaults.standard.double(forKey: "pitchThreshold").nonZeroOr(0.16)) }
         set { UserDefaults.standard.set(Double(newValue), forKey: "pitchThreshold") }
     }
     var yawThreshold: Float {
-        get { Float(UserDefaults.standard.double(forKey: "yawThreshold").nonZeroOr(0.20)) }
+        get { Float(UserDefaults.standard.double(forKey: "yawThreshold").nonZeroOr(0.28)) }
         set { UserDefaults.standard.set(Double(newValue), forKey: "yawThreshold") }
     }
     var yawNoiseThreshold: Float {
@@ -95,6 +151,35 @@ class HeadPoseDetector: NSObject, ObservableObject {
     var dwellTime: Float {
         get { Float(UserDefaults.standard.double(forKey: "dwellTime").nonZeroOr(0.2)) }
         set { UserDefaults.standard.set(Double(newValue), forKey: "dwellTime") }
+    }
+
+    // MARK: - Auto Thresholds (laptop geometry)
+
+    @Published var isAutoThresholdActive: Bool = false
+    @Published var autoComputedPitchThreshold: Float = 0
+    @Published var autoComputedYawThreshold: Float = 0
+    @Published var estimatedFaceDistanceMeters: Float = 0
+
+    var autoSensitivityMultiplier: Float {
+        get { Float(UserDefaults.standard.double(forKey: "autoSensitivityMultiplier").nonZeroOr(1.3)) }
+        set { UserDefaults.standard.set(Double(newValue), forKey: "autoSensitivityMultiplier") }
+    }
+
+    private var cameraHFOVDegrees: Float = 64.0
+    private var screenChangeObserver: NSObjectProtocol?
+
+    var effectivePitchThreshold: Float {
+        if isAutoThresholdActive, autoComputedPitchThreshold > 0 {
+            return autoComputedPitchThreshold * autoSensitivityMultiplier
+        }
+        return pitchThreshold
+    }
+
+    var effectiveYawThreshold: Float {
+        if isAutoThresholdActive, autoComputedYawThreshold > 0 {
+            return autoComputedYawThreshold * autoSensitivityMultiplier
+        }
+        return yawThreshold
     }
 
     // Track baseline pose
@@ -147,12 +232,38 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
         captureSession?.addInput(input)
 
+        // Camera HFOV: macOS doesn't expose videoFieldOfView, use 64° default
+        // (MacBook FaceTime cameras are consistently ~64° HFOV)
+        appLog("[HP] Camera HFOV: \(cameraHFOVDegrees)° (default)")
+
+        // Set auto threshold mode based on display configuration
+        isAutoThresholdActive = DisplayGeometry.isCurrentScreenBuiltIn
+        appLog("[HP] Auto threshold mode: \(isAutoThresholdActive ? "ON (built-in screen)" : "OFF (external screen)")")
+
         videoOutput = AVCaptureVideoDataOutput()
         videoOutput?.setSampleBufferDelegate(self, queue: processingQueue)
         videoOutput?.alwaysDiscardsLateVideoFrames = true
 
         if let output = videoOutput, captureSession?.canAddOutput(output) == true {
             captureSession?.addOutput(output)
+        }
+
+        // Listen for display configuration changes
+        screenChangeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            let wasAuto = self.isAutoThresholdActive
+            self.isAutoThresholdActive = DisplayGeometry.isCurrentScreenBuiltIn
+            if wasAuto != self.isAutoThresholdActive {
+                appLog("[HP] Display changed — auto threshold: \(self.isAutoThresholdActive)")
+                if !self.isAutoThresholdActive {
+                    self.autoComputedPitchThreshold = 0
+                    self.autoComputedYawThreshold = 0
+                    self.estimatedFaceDistanceMeters = 0
+                }
+            }
         }
 
         isActive = true
@@ -166,6 +277,10 @@ class HeadPoseDetector: NSObject, ObservableObject {
         videoOutput = nil
         isActive = false
         isWindowActive = false
+        if let observer = screenChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            screenChangeObserver = nil
+        }
     }
 
     private func cancelFaceCheck() {
@@ -199,15 +314,26 @@ class HeadPoseDetector: NSObject, ObservableObject {
         previousPitchDelta = nil
         previousSignedYawDelta = nil
 
-        // Use pre-chime pose as baseline if available (camera was already running for face check)
+        if isAutoThresholdActive {
+            // Laptop mode: camera axis is always the baseline
+            baselinePitch = 0
+            baselineYaw = 0
+        }
+
+        // Use pre-chime pose for smoothing initialization (camera was already running for face check)
         if let pitch = preChimePitch, let yaw = preChimeYaw {
             smoothedPitch = pitch
             smoothedYaw = yaw
-            baselinePitch = pitch
-            baselineYaw = yaw
             isFirstReading = false
             framesToSkip = 0  // Camera already stabilized from face check
-            appLog("[HP]Using pre-chime baseline: pitch=\(pitch), yaw=\(yaw)")
+
+            if !isAutoThresholdActive {
+                baselinePitch = pitch
+                baselineYaw = yaw
+                appLog("[HP]Using pre-chime baseline: pitch=\(pitch), yaw=\(yaw)")
+            } else {
+                appLog("[HP]Auto baseline: (0,0) — pre-chime smoothing init: pitch=\(pitch), yaw=\(yaw)")
+            }
             preChimePitch = nil
             preChimeYaw = nil
         }
@@ -259,8 +385,6 @@ class HeadPoseDetector: NSObject, ObservableObject {
         isCalibrationMode = true
         isWindowActive = true
         hasRespondedThisWindow = false
-        baselinePitch = nil
-        baselineYaw = nil
         isFirstReading = true
         smoothedPitch = 0
         smoothedYaw = 0
@@ -271,9 +395,19 @@ class HeadPoseDetector: NSObject, ObservableObject {
         previousPitchDelta = nil
         previousSignedYawDelta = nil
 
+        if isAutoThresholdActive {
+            // Laptop mode: camera axis is always the baseline
+            baselinePitch = 0
+            baselineYaw = 0
+            appLog("[HP]Calibration auto baseline: (0,0)")
+        } else {
+            baselinePitch = nil
+            baselineYaw = nil
+        }
+
         DispatchQueue.main.async {
             self.isCalibrationActive = true
-            self.debugBaseline = "Waiting for baseline..."
+            self.debugBaseline = self.isAutoThresholdActive ? "Baseline: camera axis (auto)" : "Waiting for baseline..."
             self.faceDetected = false
             self.dwellProgress = 0
             self.isAwaitingReturnToNeutral = false
@@ -305,8 +439,13 @@ class HeadPoseDetector: NSObject, ObservableObject {
     }
 
     func resetCalibrationBaseline() {
-        baselinePitch = nil
-        baselineYaw = nil
+        if isAutoThresholdActive {
+            baselinePitch = 0
+            baselineYaw = 0
+        } else {
+            baselinePitch = nil
+            baselineYaw = nil
+        }
         hasRespondedThisWindow = false
         isFirstReading = true
         dwellStartTime = nil
@@ -400,6 +539,12 @@ class HeadPoseDetector: NSObject, ObservableObject {
                     self.preChimeYaw = y
                     appLog("[HP] Pre-chime pose captured: pitch=\(p), yaw=\(y)")
                 }
+
+                // Compute auto thresholds from face bounding box
+                if DisplayGeometry.isCurrentScreenBuiltIn {
+                    self.computeAutoThresholds(boundingBoxWidth: Float(face.boundingBox.width))
+                }
+
                 DispatchQueue.main.async {
                     self.faceDetected = true
                 }
@@ -460,11 +605,26 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
         // Establish baseline on first reading (after smoothing kicks in)
         if baselinePitch == nil {
-            baselinePitch = smoothedPitch
-            baselineYaw = smoothedYaw
-            appLog("[HP]Baseline set: pitch=\(smoothedPitch), yaw=\(smoothedYaw)")
+            if isAutoThresholdActive {
+                // Laptop mode: camera axis is the baseline (geometry fully defines screen center)
+                baselinePitch = 0
+                baselineYaw = 0
+                appLog("[HP]Auto baseline: (0,0) — raw smoothed: pitch=\(smoothedPitch), yaw=\(smoothedYaw)")
+            } else {
+                baselinePitch = smoothedPitch
+                baselineYaw = smoothedYaw
+                appLog("[HP]Baseline set: pitch=\(smoothedPitch), yaw=\(smoothedYaw)")
+            }
+
+            // Compute auto thresholds from current face bbox
+            if DisplayGeometry.isCurrentScreenBuiltIn {
+                computeAutoThresholds(boundingBoxWidth: Float(face.boundingBox.width))
+            }
+
             DispatchQueue.main.async {
-                self.debugBaseline = String(format: "Baseline: P=%.2f, Y=%.2f", self.smoothedPitch, self.smoothedYaw)
+                self.debugBaseline = self.isAutoThresholdActive
+                    ? "Baseline: camera axis (auto)"
+                    : String(format: "Baseline: P=%.2f, Y=%.2f", self.baselinePitch ?? 0, self.baselineYaw ?? 0)
             }
             return
         }
@@ -489,8 +649,8 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
             // Update gaze edge and intensity for screen glow indicator
             // Intensity goes from 0 (center) to 1 (at threshold)
-            let yawThresh = self.yawThreshold
-            let pitchThresh = self.pitchThreshold
+            let yawThresh = self.effectiveYawThreshold
+            let pitchThresh = self.effectivePitchThreshold
 
             // Calculate intensity as ratio of delta to threshold (clamped 0-1)
             let yawIntensity = min(abs(signedYawDelta) / yawThresh, 1.0)
@@ -541,7 +701,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
             }
         }
 
-        appLog("[HP]Delta: pitch=\(pitchDelta), yaw=\(yawDelta)")
+        appLog("[HP]Delta: pitch=\(pitchDelta), yaw=\(yawDelta), yawSpd=\(String(format: "%.4f", yawSpeed)), pitchSpd=\(String(format: "%.4f", pitchSpeed))")
 
         // Gesture priority: YAW takes precedence over PITCH
         //
@@ -549,9 +709,9 @@ class HeadPoseDetector: NSObject, ObservableObject {
         // pitch is evaluated independently. The orthogonal stillness check
         // prevents false triggers during active re-centering movement.
 
-        // Get current thresholds
-        let currentPitchThreshold = pitchThreshold
-        let currentYawThreshold = yawThreshold
+        // Get current thresholds (auto-computed or manual)
+        let currentPitchThreshold = effectivePitchThreshold
+        let currentYawThreshold = effectiveYawThreshold
         let currentDwellTime = dwellTime
 
         // Determine which pose is detected (if any)
@@ -569,6 +729,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
         if detectedPose != .neutral {
             // Don't start new dwell if we're waiting for return to neutral or in cooldown
             if requiresReturnToNeutral || isInCooldown {
+                appLog("[HP]Dwell BLOCKED: rtn=\(requiresReturnToNeutral) cool=\(isInCooldown) pose=\(detectedPose)")
                 return
             }
 
@@ -582,10 +743,12 @@ class HeadPoseDetector: NSObject, ObservableObject {
                 }
                 if !isSettled {
                     dwellStartTime = Date()  // Push dwell forward — still re-centering
+                    appLog("[HP]Dwell PUSHED: pose=\(detectedPose) yawSpd=\(String(format: "%.4f", yawSpeed)) pitchSpd=\(String(format: "%.4f", pitchSpeed))")
                 }
 
                 // Same pose, check if dwell time exceeded
                 let elapsed = Float(Date().timeIntervalSince(dwellStartTime ?? startTime))
+                appLog("[HP]Dwell: pose=\(detectedPose) elapsed=\(String(format: "%.3f", elapsed))s/\(currentDwellTime)s settled=\(isSettled)")
                 let progress = min(elapsed / currentDwellTime, 1.0)
 
                 DispatchQueue.main.async {
@@ -639,6 +802,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
                 }
             } else {
                 // New pose detected, start dwell timer
+                appLog("[HP]Dwell NEW: pose=\(detectedPose) (was \(currentDwellPose))")
                 dwellStartTime = Date()
                 currentDwellPose = detectedPose
                 DispatchQueue.main.async {
@@ -663,6 +827,23 @@ class HeadPoseDetector: NSObject, ObservableObject {
                     self.onReturnToNeutral?()
                 }
             }
+        }
+    }
+    // MARK: - Auto Threshold Computation
+
+    private func computeAutoThresholds(boundingBoxWidth bbW: Float) {
+        let distance = DisplayGeometry.estimateFaceDistance(boundingBoxWidth: bbW, cameraHFOVDegrees: cameraHFOVDegrees)
+        guard distance > 0, let screenSize = DisplayGeometry.screenSizeMeters else { return }
+
+        let rawPitch = DisplayGeometry.computePitchThreshold(screenHeightMeters: screenSize.height, faceDistanceMeters: distance)
+        let rawYaw = DisplayGeometry.computeYawThreshold(screenWidthMeters: screenSize.width, faceDistanceMeters: distance)
+
+        appLog("[HP] Auto threshold: bbW=\(String(format: "%.3f", bbW)), dist=\(String(format: "%.2f", distance))m, pitch=\(String(format: "%.3f", rawPitch)), yaw=\(String(format: "%.3f", rawYaw))")
+
+        DispatchQueue.main.async {
+            self.estimatedFaceDistanceMeters = distance
+            self.autoComputedPitchThreshold = rawPitch
+            self.autoComputedYawThreshold = rawYaw
         }
     }
 }

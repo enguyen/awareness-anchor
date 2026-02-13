@@ -1,7 +1,7 @@
 # Awareness Anchor - Project Status
 
-**Last Updated:** 2025-02-11
-**Current Phase:** 3 (Statistics & Optimization) - Phase 2 optimization shipped, face-detection chime gating added
+**Last Updated:** 2025-02-13
+**Current Phase:** 3 (Statistics & Optimization) - Phase 2 optimization shipped, face-detection chime gating added, geometry-based auto thresholds for laptop mode
 
 ---
 
@@ -21,6 +21,8 @@ Native macOS menu bar app for mindfulness bell reminders. Plays Tibetan bowl sou
 - Settings panel functional with Calibrate tab
 - Phase 2 optimization: KM survival, equilibrium model, 4 StatsView cards
 - Face-detection gating: chime only plays if camera detects a face (3s timeout)
+- Geometry-based auto thresholds for laptop mode (DisplayGeometry + estimated viewing distance)
+- Pre-chime baseline capture, orthogonal stillness detection, yaw noise gate removal
 
 ---
 
@@ -60,7 +62,7 @@ AwarenessAnchor/
     ChimeScheduler.swift       # Random interval timing
     DataStore.swift            # SQLite persistence + time estimation statistics
     AwarenessOptimizer.swift   # KM survival, equilibrium model, optimization
-    HeadPoseDetector.swift     # Vision framework face detection + pre-chime face check
+    HeadPoseDetector.swift     # Vision framework face detection + pre-chime face check + auto thresholds
     MouseEdgeDetector.swift    # Mouse proximity to screen edges
     InputCoordinator.swift     # Unified input: speed-based source precedence
     HotkeyManager.swift        # Global keyboard shortcuts

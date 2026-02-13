@@ -41,7 +41,7 @@ struct SettingsView: View {
                     Label("Statistics", systemImage: "chart.bar")
                 }
         }
-        .frame(width: 480, height: 620)
+        .frame(width: 720, height: 620)
         .environmentObject(appState)
         .onDisappear {
             // Stop calibration if settings window is closed
@@ -85,6 +85,7 @@ struct GeneralSettingsView: View {
     @Binding var headPoseEnabled: Bool
     @Binding var mouseTrackingEnabled: Bool
     @Binding var launchAtLogin: Bool
+    @AppStorage("playSystemSoundOnTrigger") private var playSystemSoundOnTrigger = false
     @AppStorage("screenGlowEnabled") private var screenGlowEnabled = true
     @AppStorage("screenGlowOpacity") private var screenGlowOpacity = 0.5
 
@@ -101,13 +102,14 @@ struct GeneralSettingsView: View {
 
                 // Responding to Chimes
                 SettingsSection(title: "Responding to Chimes") {
-                    // Mouse pointer tracking
-                    Toggle("Mouse pointer tracking", isOn: $mouseTrackingEnabled)
-                        .toggleStyle(.switch)
-
-                    // Camera-based head tracking
-                    Toggle("Camera-based head tracking", isOn: $headPoseEnabled)
-                        .toggleStyle(.switch)
+                    HStack(spacing: 24) {
+                        Toggle("Mouse pointer tracking", isOn: $mouseTrackingEnabled)
+                            .toggleStyle(.switch)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Toggle("Camera-based head tracking", isOn: $headPoseEnabled)
+                            .toggleStyle(.switch)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
 
                     // Unified gesture explanation (shown when either is enabled)
                     if mouseTrackingEnabled || headPoseEnabled {
@@ -117,31 +119,33 @@ struct GeneralSettingsView: View {
                                 .fontWeight(.medium)
                                 .foregroundColor(.secondary)
 
-                            HStack(spacing: 12) {
-                                Image(systemName: "arrow.up.circle.fill")
-                                    .foregroundColor(.green)
-                                    .font(.title2)
-                                VStack(alignment: .leading) {
-                                    Text("Up / Top")
-                                        .fontWeight(.medium)
-                                    Text("Already Present")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                            HStack(spacing: 24) {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "arrow.up.circle.fill")
+                                        .foregroundColor(.green)
+                                        .font(.title2)
+                                    VStack(alignment: .leading) {
+                                        Text("Up / Top")
+                                            .fontWeight(.medium)
+                                        Text("Already Present")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
-                                Spacer()
-                            }
 
-                            HStack(spacing: 12) {
-                                Image(systemName: "arrow.left.arrow.right.circle.fill")
-                                    .foregroundColor(.orange)
-                                    .font(.title2)
-                                VStack(alignment: .leading) {
-                                    Text("Left / Right")
-                                        .fontWeight(.medium)
-                                    Text("Returned to Awareness")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                HStack(spacing: 12) {
+                                    Image(systemName: "arrow.left.arrow.right.circle.fill")
+                                        .foregroundColor(.orange)
+                                        .font(.title2)
+                                    VStack(alignment: .leading) {
+                                        Text("Left / Right")
+                                            .fontWeight(.medium)
+                                        Text("Returned to Awareness")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
+
                                 Spacer()
                             }
                         }
@@ -157,10 +161,16 @@ struct GeneralSettingsView: View {
 
                 Divider()
 
-                // Visual Feedback
-                SettingsSection(title: "Visual Feedback") {
-                    Toggle("Show screen edge glow", isOn: $screenGlowEnabled)
-                        .toggleStyle(.switch)
+                // Audiovisual Feedback
+                SettingsSection(title: "Audiovisual Feedback") {
+                    HStack(spacing: 24) {
+                        Toggle("Play system sound on response", isOn: $playSystemSoundOnTrigger)
+                            .toggleStyle(.switch)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Toggle("Show screen edge glow", isOn: $screenGlowEnabled)
+                            .toggleStyle(.switch)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
 
                     if screenGlowEnabled {
                         VStack(alignment: .leading, spacing: 8) {
@@ -178,7 +188,7 @@ struct GeneralSettingsView: View {
                         }
                     }
 
-                    Text("Displays a colored glow on screen edges when tracking input and registering responses.")
+                    Text("Feedback when a response is registered via head motion or mouse position.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -286,13 +296,14 @@ struct HotkeySettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 SettingsSection(title: "Global Shortcuts") {
-                    VStack(spacing: 12) {
+                    HStack(spacing: 24) {
                         HotkeyRow(
                             action: "Already Present",
                             icon: "sun.max.fill",
                             iconColor: .green,
                             shortcut: hotkeyManager.presentHotkey.displayName
                         )
+                        .frame(maxWidth: .infinity)
 
                         HotkeyRow(
                             action: "Returned to Awareness",
@@ -300,6 +311,7 @@ struct HotkeySettingsView: View {
                             iconColor: .orange,
                             shortcut: hotkeyManager.returnedHotkey.displayName
                         )
+                        .frame(maxWidth: .infinity)
                     }
 
                     Text("These shortcuts work globally, even when other apps are focused.")

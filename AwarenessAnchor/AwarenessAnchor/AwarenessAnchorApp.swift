@@ -611,12 +611,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.smoothedRightIntensity = 0
 
             if isCalibrationMode {
-                // In calibration mode, add 2 second cooldown before allowing new highlights
+                // In calibration mode, add 3 second cooldown before allowing new highlights
                 // Set cooldown on AppDelegate (for glow updates) and both detectors (for triggers)
                 self.isInCooldown = true
                 self.appState.headPoseDetector.isInCooldown = true
                 self.appState.mouseEdgeDetector.isInCooldown = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
                     guard let self = self else { return }
                     self.isInCooldown = false
                     self.appState.headPoseDetector.isInCooldown = false
