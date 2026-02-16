@@ -162,19 +162,15 @@ class InputCoordinator: ObservableObject {
         // Note: isCalibrationActive is managed directly by startCalibration/stopCalibration
         // rather than forwarding from detectors, to ensure it works for both mouse and head pose
 
-        // Set up trigger callbacks
+        // Set up trigger callbacks — triggers fire from either source regardless of
+        // activeSource (matching calibration mode behavior). Source switching only
+        // controls which input drives glow intensity, not which can trigger.
         headPoseDetector.onGazeTrigger = { [weak self] edge in
-            guard let self = self else { return }
-            if self.activeSource != .mouse {  // Only fire if head pose is active
-                self.onGazeTrigger?(edge)
-            }
+            self?.onGazeTrigger?(edge)
         }
 
         mouseEdgeDetector.onGazeTrigger = { [weak self] edge in
-            guard let self = self else { return }
-            if self.activeSource != .headPose {  // Only fire if mouse is active
-                self.onGazeTrigger?(edge)
-            }
+            self?.onGazeTrigger?(edge)
         }
 
         headPoseDetector.onReturnToNeutral = { [weak self] in
@@ -184,25 +180,17 @@ class InputCoordinator: ObservableObject {
         mouseEdgeDetector.onReturnToNeutral = { [weak self] in
             guard let self = self else { return }
             self.onReturnToNeutral?()
-            // If the response window already ended and we were holding glow
-            // for the post-trigger state, clean up now
             if !self.mouseEdgeDetector.isWindowActive {
                 self.activeSource = .none
             }
         }
 
         headPoseDetector.onPoseDetected = { [weak self] pose in
-            guard let self = self else { return }
-            if self.activeSource != .mouse {
-                self.onPoseDetected?(pose)
-            }
+            self?.onPoseDetected?(pose)
         }
 
         mouseEdgeDetector.onPoseDetected = { [weak self] pose in
-            guard let self = self else { return }
-            if self.activeSource != .headPose {
-                self.onPoseDetected?(pose)
-            }
+            self?.onPoseDetected?(pose)
         }
     }
 

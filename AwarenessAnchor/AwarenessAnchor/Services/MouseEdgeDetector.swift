@@ -75,6 +75,9 @@ class MouseEdgeDetector: ObservableObject {
     private var previousDwellMousePosition: CGPoint?
     private let orthogonalSettlePixelsPerEvent: CGFloat = 3.0
 
+    // Timer-based dwell — fires even when mouse stops moving (touchpad lifted)
+    private var dwellTimer: Timer?
+
     // MARK: - Dwell Time (reads from HeadPoseDetector's UserDefaults)
 
     var dwellTime: Float {
@@ -130,6 +133,7 @@ class MouseEdgeDetector: ObservableObject {
 
     func deactivateWindow() {
         isWindowActive = false
+        cancelDwellTimer()
         // Don't reset intensities here — let them persist based on mouse position
         // so the glow holds after a trigger until the mouse moves away.
         // Only reset dwell tracking state.
@@ -170,6 +174,7 @@ class MouseEdgeDetector: ObservableObject {
     // MARK: - Private Methods
 
     private func resetState() {
+        cancelDwellTimer()
         DispatchQueue.main.async {
             self.topIntensity = 0
             self.leftIntensity = 0
@@ -269,6 +274,51 @@ class MouseEdgeDetector: ObservableObject {
         processDwellLogic(detectedEdge: detectedEdge, isInNeutralZone: isInNeutralZone, mouseLocation: mouseLocation)
     }
 
+    /// Schedule a timer to fire the dwell trigger even if no mouse events arrive (touchpad lifted).
+    private func scheduleDwellTimer(for edge: GazeEdge) {
+        dwellTimer?.invalidate()
+        let delay = TimeInterval(dwellTime)
+        dwellTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            guard self.currentDwellEdge == edge, !self.requiresReturnToNeutral, !self.isInCooldown else { return }
+            self.fireDwellTrigger(edge: edge)
+        }
+    }
+
+    private func cancelDwellTimer() {
+        dwellTimer?.invalidate()
+        dwellTimer = nil
+    }
+
+    /// Fire the dwell trigger for a given edge. Idempotent — guards on requiresReturnToNeutral.
+    private func fireDwellTrigger(edge: GazeEdge) {
+        guard !requiresReturnToNeutral else { return }
+
+        let elapsed = dwellStartTime.map { Float(Date().timeIntervalSince($0)) } ?? dwellTime
+        appLog("[Mouse] TRIGGERED: \(edge), dwell=\(elapsed)s")
+
+        requiresReturnToNeutral = true
+        cancelDwellTimer()
+
+        let pose: HeadPose = edge == .top ? .tiltUp : .turnLeftRight
+
+        DispatchQueue.main.async {
+            self.isAwaitingReturnToNeutral = true
+            self.dwellProgress = 0
+            self.onGazeTrigger?(edge)
+
+            if self.isCalibrationMode {
+                self.onCalibrationTriggered?(pose, edge)
+            } else {
+                self.hasRespondedThisWindow = true
+                self.onPoseDetected?(pose)
+            }
+        }
+
+        dwellStartTime = nil
+        currentDwellEdge = .none
+    }
+
     private func processDwellLogic(detectedEdge: GazeEdge, isInNeutralZone: Bool, mouseLocation: CGPoint) {
         let currentDwellTime = dwellTime
 
@@ -292,11 +342,12 @@ class MouseEdgeDetector: ObservableObject {
                     }
                     if orthogonalMovement > orthogonalSettlePixelsPerEvent {
                         dwellStartTime = Date()  // Push dwell forward — still sliding
+                        scheduleDwellTimer(for: detectedEdge)
                     }
                 }
                 previousDwellMousePosition = mouseLocation
 
-                // Same edge, check dwell progress
+                // Same edge, update progress (timer handles the actual trigger)
                 let elapsed = Float(Date().timeIntervalSince(dwellStartTime ?? startTime))
                 let progress = min(elapsed / currentDwellTime, 1.0)
 
@@ -304,43 +355,23 @@ class MouseEdgeDetector: ObservableObject {
                     self.dwellProgress = progress
                 }
 
+                // Also check inline in case the event arrives after dwell completed
                 if elapsed >= currentDwellTime {
-                    // Dwell complete - trigger!
-                    appLog("[Mouse] TRIGGERED: \(detectedEdge), dwell=\(elapsed)s")
-
-                    requiresReturnToNeutral = true
-
-                    // Map edge to HeadPose for compatibility
-                    let pose: HeadPose = detectedEdge == .top ? .tiltUp : .turnLeftRight
-
-                    DispatchQueue.main.async {
-                        self.isAwaitingReturnToNeutral = true
-                        self.dwellProgress = 0
-                        self.onGazeTrigger?(detectedEdge)
-
-                        if self.isCalibrationMode {
-                            self.onCalibrationTriggered?(pose, detectedEdge)
-                        } else {
-                            self.hasRespondedThisWindow = true
-                            self.onPoseDetected?(pose)
-                        }
-                    }
-
-                    // Reset dwell tracking
-                    dwellStartTime = nil
-                    currentDwellEdge = .none
+                    fireDwellTrigger(edge: detectedEdge)
                 }
             } else {
                 // New edge detected, start dwell timer
                 dwellStartTime = Date()
                 currentDwellEdge = detectedEdge
                 previousDwellMousePosition = mouseLocation
+                scheduleDwellTimer(for: detectedEdge)
                 DispatchQueue.main.async {
                     self.dwellProgress = 0
                 }
             }
         } else {
             // Not at an edge, reset dwell tracking
+            cancelDwellTimer()
             if dwellStartTime != nil || currentDwellEdge != .none {
                 dwellStartTime = nil
                 currentDwellEdge = .none

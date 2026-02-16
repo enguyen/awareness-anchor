@@ -21,12 +21,15 @@ enum GazeEdge {
 struct DisplayGeometry {
     static let averageFaceWidthMeters: Float = 0.16
 
-    /// True when the currently active screen is the built-in display (camera-to-screen geometry is known).
-    /// Works even when external monitors are connected — only the active screen matters.
-    static var isCurrentScreenBuiltIn: Bool {
-        guard let mainScreen = NSScreen.main else { return false }
-        let screenNumber = mainScreen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
-        return CGDisplayIsBuiltin(screenNumber) != 0
+    /// True when the only connected display is the built-in laptop screen (no external monitors).
+    /// Auto thresholds only apply in this case since camera-to-screen geometry is fully known.
+    static var isLaptopOnly: Bool {
+        guard let builtIn = builtInDisplayID else { return false }
+        // Check that the built-in display exists AND is the only screen
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: 16)
+        var displayCount: UInt32 = 0
+        CGGetActiveDisplayList(16, &displayIDs, &displayCount)
+        return displayCount == 1 && displayIDs[0] == builtIn
     }
 
     /// Physical screen size in meters for the built-in display.
@@ -237,8 +240,8 @@ class HeadPoseDetector: NSObject, ObservableObject {
         appLog("[HP] Camera HFOV: \(cameraHFOVDegrees)° (default)")
 
         // Set auto threshold mode based on display configuration
-        isAutoThresholdActive = DisplayGeometry.isCurrentScreenBuiltIn
-        appLog("[HP] Auto threshold mode: \(isAutoThresholdActive ? "ON (built-in screen)" : "OFF (external screen)")")
+        isAutoThresholdActive = DisplayGeometry.isLaptopOnly
+        appLog("[HP] Auto threshold mode: \(isAutoThresholdActive ? "ON (laptop only)" : "OFF (external monitor connected)")")
 
         videoOutput = AVCaptureVideoDataOutput()
         videoOutput?.setSampleBufferDelegate(self, queue: processingQueue)
@@ -255,7 +258,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
         ) { [weak self] _ in
             guard let self = self else { return }
             let wasAuto = self.isAutoThresholdActive
-            self.isAutoThresholdActive = DisplayGeometry.isCurrentScreenBuiltIn
+            self.isAutoThresholdActive = DisplayGeometry.isLaptopOnly
             if wasAuto != self.isAutoThresholdActive {
                 appLog("[HP] Display changed — auto threshold: \(self.isAutoThresholdActive)")
                 if !self.isAutoThresholdActive {
@@ -532,7 +535,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
                 }
 
                 // Compute auto thresholds from face bounding box
-                if DisplayGeometry.isCurrentScreenBuiltIn {
+                if DisplayGeometry.isLaptopOnly {
                     self.computeAutoThresholds(boundingBoxWidth: Float(face.boundingBox.width))
                 }
 
@@ -608,7 +611,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
             }
 
             // Compute auto thresholds from current face bbox
-            if DisplayGeometry.isCurrentScreenBuiltIn {
+            if DisplayGeometry.isLaptopOnly {
                 computeAutoThresholds(boundingBoxWidth: Float(face.boundingBox.width))
             }
 

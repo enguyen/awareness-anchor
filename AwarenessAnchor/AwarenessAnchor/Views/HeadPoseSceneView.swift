@@ -72,7 +72,7 @@ struct HeadPoseSceneView: NSViewRepresentable {
         private var cachedFarWidth: Float = 1.6
         private var cachedFarHeight: Float = 0.72
         private let frustumDepth: Float = 3.5
-        private let frustumOffsetY: Float = 0.1
+        private let frustumOffsetY: Float = 0.15  // Match gazeOriginY so neutral gaze hits frustum center
 
         // Gaze vector origin (matches createGazeVector position)
         private let gazeOriginX: Float = 0
@@ -205,18 +205,18 @@ struct HeadPoseSceneView: NSViewRepresentable {
             cachedFarWidth = farWidth
             cachedFarHeight = farHeight
 
-            // Near face (at head)
-            let n0 = SCNVector3(-nearSize, -nearSize * 0.5, 0)     // bottom-left
-            let n1 = SCNVector3(nearSize, -nearSize * 0.5, 0)      // bottom-right
+            // Near face (at head) — symmetric
+            let n0 = SCNVector3(-nearSize, -nearSize * 0.8, 0)     // bottom-left
+            let n1 = SCNVector3(nearSize, -nearSize * 0.8, 0)      // bottom-right
             let n2 = SCNVector3(nearSize, nearSize * 0.8, 0)       // top-right
             let n3 = SCNVector3(-nearSize, nearSize * 0.8, 0)      // top-left
 
-            // Far face
+            // Far face — symmetric so neutral gaze lands at center
             let depth = frustumDepth
-            let f0 = SCNVector3(-farWidth, -farHeight * 0.3, -depth)   // bottom-left
-            let f1 = SCNVector3(farWidth, -farHeight * 0.3, -depth)    // bottom-right
-            let f2 = SCNVector3(farWidth, farHeight, -depth)           // top-right
-            let f3 = SCNVector3(-farWidth, farHeight, -depth)          // top-left
+            let f0 = SCNVector3(-farWidth, -farHeight, -depth)   // bottom-left
+            let f1 = SCNVector3(farWidth, -farHeight, -depth)    // bottom-right
+            let f2 = SCNVector3(farWidth, farHeight, -depth)     // top-right
+            let f3 = SCNVector3(-farWidth, farHeight, -depth)    // top-left
 
             // Left face
             let leftPlane = createQuadGeometry(v0: n0, v1: n3, v2: f3, v3: f0)
@@ -485,7 +485,7 @@ struct HeadPoseSceneView: NSViewRepresentable {
             if isMouse {
                 // Map mouse normalized coords (0-1) to far face rectangle in world space.
                 posX = -cachedFarWidth + 2.0 * cachedFarWidth * normalizedMouseX
-                let farMinY = frustumOffsetY - cachedFarHeight * 0.3
+                let farMinY = frustumOffsetY - cachedFarHeight
                 let farMaxY = frustumOffsetY + cachedFarHeight
                 posY = farMinY + (farMaxY - farMinY) * normalizedMouseY
 
@@ -534,7 +534,7 @@ struct HeadPoseSceneView: NSViewRepresentable {
             // Color: white inside frustum, orange outside
             let farMinX = -cachedFarWidth
             let farMaxX = cachedFarWidth
-            let farMinY = frustumOffsetY - cachedFarHeight * 0.3
+            let farMinY = frustumOffsetY - cachedFarHeight
             let farMaxY = frustumOffsetY + cachedFarHeight
             let outside = posX < farMinX || posX > farMaxX ||
                           posY < farMinY || posY > farMaxY
