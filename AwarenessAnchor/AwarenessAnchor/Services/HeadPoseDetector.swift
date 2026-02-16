@@ -307,7 +307,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
         isFirstReading = true
         smoothedPitch = 0
         smoothedYaw = 0
-        framesToSkip = 3  // Skip first few frames to let camera stabilize
+        framesToSkip = 5  // Skip first frames to let camera and face tracking stabilize (~330ms)
         dwellStartTime = nil
         currentDwellPose = .neutral
         requiresReturnToNeutral = false
@@ -320,20 +320,11 @@ class HeadPoseDetector: NSObject, ObservableObject {
             baselineYaw = 0
         }
 
-        // Use pre-chime pose for smoothing initialization (camera was already running for face check)
-        if let pitch = preChimePitch, let yaw = preChimeYaw {
-            smoothedPitch = pitch
-            smoothedYaw = yaw
-            isFirstReading = false
-            framesToSkip = 0  // Camera already stabilized from face check
-
-            if !isAutoThresholdActive {
-                baselinePitch = pitch
-                baselineYaw = yaw
-                appLog("[HP]Using pre-chime baseline: pitch=\(pitch), yaw=\(yaw)")
-            } else {
-                appLog("[HP]Auto baseline: (0,0) — pre-chime smoothing init: pitch=\(pitch), yaw=\(yaw)")
-            }
+        // Discard pre-chime pose — single-frame snapshots are unreliable and poison
+        // the smoother if they differ from the stabilized tracking position.
+        // Let the first real frame after skip initialize the smoother cleanly.
+        if preChimePitch != nil || preChimeYaw != nil {
+            appLog("[HP]Discarding pre-chime data (pitch=\(preChimePitch ?? 0), yaw=\(preChimeYaw ?? 0)) — will init from stabilized frames")
             preChimePitch = nil
             preChimeYaw = nil
         }
@@ -388,7 +379,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
         isFirstReading = true
         smoothedPitch = 0
         smoothedYaw = 0
-        framesToSkip = 3  // Skip first few frames to let camera stabilize
+        framesToSkip = 5  // Skip first frames to let camera and face tracking stabilize (~330ms)
         dwellStartTime = nil
         currentDwellPose = .neutral
         requiresReturnToNeutral = false

@@ -65,6 +65,7 @@ class MouseEdgeDetector: ObservableObject {
     private var dwellStartTime: Date?
     private var currentDwellEdge: GazeEdge = .none
     private var requiresReturnToNeutral: Bool = false
+    private var hasRespondedThisWindow: Bool = false
 
     // Track current mouse position for speed calculations
     private(set) var lastMousePosition: CGPoint?
@@ -116,6 +117,7 @@ class MouseEdgeDetector: ObservableObject {
 
         appLog("[Mouse] Window activated, starting mouse tracking...")
         isWindowActive = true
+        hasRespondedThisWindow = false
         dwellStartTime = nil
         currentDwellEdge = .none
         requiresReturnToNeutral = false
@@ -249,10 +251,10 @@ class MouseEdgeDetector: ObservableObject {
         let normalizedY = Float((mouseLocation.y - screenFrame.minY) / screenFrame.height)
 
         // Update intensities only when in a visual-active state:
-        // - Window active (response window open)
+        // - Window active (response window open) and not yet responded
         // - Calibration mode (preview active)
-        // - Post-trigger (glow persists until return to neutral)
-        if isWindowActive || isCalibrationMode || requiresReturnToNeutral {
+        // - Post-trigger in calibration (glow persists until return to neutral)
+        if (isWindowActive && !hasRespondedThisWindow) || isCalibrationMode || (requiresReturnToNeutral && isCalibrationMode) {
             DispatchQueue.main.async {
                 self.topIntensity = Float(rawTopIntensity)
                 self.leftIntensity = Float(rawLeftIntensity)
@@ -319,6 +321,7 @@ class MouseEdgeDetector: ObservableObject {
                         if self.isCalibrationMode {
                             self.onCalibrationTriggered?(pose, detectedEdge)
                         } else {
+                            self.hasRespondedThisWindow = true
                             self.onPoseDetected?(pose)
                         }
                     }
