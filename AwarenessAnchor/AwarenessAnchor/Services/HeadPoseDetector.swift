@@ -317,11 +317,11 @@ class HeadPoseDetector: NSObject, ObservableObject {
         previousPitchDelta = nil
         previousSignedYawDelta = nil
 
-        if isAutoThresholdActive {
-            // Laptop mode: camera axis is always the baseline
-            baselinePitch = 0
-            baselineYaw = 0
-        }
+        // Always capture baseline from first stable frames — even in auto mode,
+        // because the camera is above the screen and neutral gaze has significant
+        // negative pitch relative to camera axis.
+        baselinePitch = nil
+        baselineYaw = nil
 
         // Discard pre-chime pose — single-frame snapshots are unreliable and poison
         // the smoother if they differ from the stabilized tracking position.
@@ -333,10 +333,8 @@ class HeadPoseDetector: NSObject, ObservableObject {
         }
 
         DispatchQueue.main.async {
-            self.debugBaseline = self.baselinePitch != nil
-                ? String(format: "Baseline: P=%.2f, Y=%.2f", self.baselinePitch ?? 0, self.baselineYaw ?? 0)
-                : "Calibrating..."
-            self.faceDetected = self.baselinePitch != nil  // Already detected if we have pre-chime data
+            self.debugBaseline = "Calibrating..."
+            self.faceDetected = false
             self.dwellProgress = 0
             self.isAwaitingReturnToNeutral = false
         }
@@ -389,19 +387,14 @@ class HeadPoseDetector: NSObject, ObservableObject {
         previousPitchDelta = nil
         previousSignedYawDelta = nil
 
-        if isAutoThresholdActive {
-            // Laptop mode: camera axis is always the baseline
-            baselinePitch = 0
-            baselineYaw = 0
-            appLog("[HP]Calibration auto baseline: (0,0)")
-        } else {
-            baselinePitch = nil
-            baselineYaw = nil
-        }
+        // Always capture baseline from first stable frames (camera is above screen,
+        // so neutral gaze has negative pitch — (0,0) would trigger immediately)
+        baselinePitch = nil
+        baselineYaw = nil
 
         DispatchQueue.main.async {
             self.isCalibrationActive = true
-            self.debugBaseline = self.isAutoThresholdActive ? "Baseline: camera axis (auto)" : "Waiting for baseline..."
+            self.debugBaseline = "Waiting for baseline..."
             self.faceDetected = false
             self.dwellProgress = 0
             self.isAwaitingReturnToNeutral = false
@@ -433,13 +426,8 @@ class HeadPoseDetector: NSObject, ObservableObject {
     }
 
     func resetCalibrationBaseline() {
-        if isAutoThresholdActive {
-            baselinePitch = 0
-            baselineYaw = 0
-        } else {
-            baselinePitch = nil
-            baselineYaw = nil
-        }
+        baselinePitch = nil
+        baselineYaw = nil
         hasRespondedThisWindow = false
         isFirstReading = true
         dwellStartTime = nil
@@ -598,17 +586,12 @@ class HeadPoseDetector: NSObject, ObservableObject {
         }
 
         // Establish baseline on first reading (after smoothing kicks in)
+        // Always use the actual smoothed face pose — even in auto/laptop mode,
+        // because the camera is above the screen and neutral gaze has negative pitch.
         if baselinePitch == nil {
-            if isAutoThresholdActive {
-                // Laptop mode: camera axis is the baseline (geometry fully defines screen center)
-                baselinePitch = 0
-                baselineYaw = 0
-                appLog("[HP]Auto baseline: (0,0) — raw smoothed: pitch=\(smoothedPitch), yaw=\(smoothedYaw)")
-            } else {
-                baselinePitch = smoothedPitch
-                baselineYaw = smoothedYaw
-                appLog("[HP]Baseline set: pitch=\(smoothedPitch), yaw=\(smoothedYaw)")
-            }
+            baselinePitch = smoothedPitch
+            baselineYaw = smoothedYaw
+            appLog("[HP]Baseline set: pitch=\(smoothedPitch), yaw=\(smoothedYaw) (auto=\(isAutoThresholdActive))")
 
             // Compute auto thresholds from current face bbox
             if DisplayGeometry.isLaptopOnly {
@@ -616,9 +599,7 @@ class HeadPoseDetector: NSObject, ObservableObject {
             }
 
             DispatchQueue.main.async {
-                self.debugBaseline = self.isAutoThresholdActive
-                    ? "Baseline: camera axis (auto)"
-                    : String(format: "Baseline: P=%.2f, Y=%.2f", self.baselinePitch ?? 0, self.baselineYaw ?? 0)
+                self.debugBaseline = String(format: "Baseline: P=%.2f, Y=%.2f", self.baselinePitch ?? 0, self.baselineYaw ?? 0)
             }
             return
         }
