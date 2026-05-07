@@ -24,6 +24,7 @@ struct HeadPoseCalibrationView: View {
     @State private var dwellTime: Float = 0.2
     @State private var sensitivityMultiplier: Float = 1.3
     @State private var calibrationChimePlayer: AVAudioPlayer?
+    @State private var recordingSavedMessage: String?
 
     var body: some View {
         ScrollView {
@@ -130,18 +131,42 @@ struct HeadPoseCalibrationView: View {
                     }
                     .font(.caption)
 
-                    Button(action: toggleTest) {
-                        HStack {
-                            Image(systemName: isTestActive ? "stop.circle.fill" : "play.circle.fill")
-                            Text(isTestActive ? "Stop Preview" : "Preview Responses")
+                    HStack(spacing: 8) {
+                        Button(action: toggleTest) {
+                            HStack {
+                                Image(systemName: isTestActive ? "stop.circle.fill" : "play.circle.fill")
+                                Text(isTestActive ? "Stop Preview" : "Preview Responses")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(isTestActive ? Color.red.opacity(0.2) : Color.green.opacity(0.2))
+                            .foregroundColor(isTestActive ? .red : .green)
+                            .cornerRadius(8)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(isTestActive ? Color.red.opacity(0.2) : Color.green.opacity(0.2))
-                        .foregroundColor(isTestActive ? .red : .green)
-                        .cornerRadius(8)
+                        .buttonStyle(.plain)
+
+                        if isTestActive {
+                            Button(action: toggleRecording) {
+                                HStack {
+                                    Image(systemName: detector.isRecordingEnabled ? "stop.fill" : "record.circle")
+                                    Text(detector.isRecordingEnabled ? "Stop (\(detector.recordingFrameCount))" : "Record")
+                                }
+                                .padding(.vertical, 10)
+                                .padding(.horizontal, 12)
+                                .background(detector.isRecordingEnabled ? Color.red.opacity(0.3) : Color.orange.opacity(0.2))
+                                .foregroundColor(detector.isRecordingEnabled ? .red : .orange)
+                                .cornerRadius(8)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(.plain)
+
+                    if let msg = recordingSavedMessage {
+                        Text(msg)
+                            .font(.caption)
+                            .foregroundColor(.green)
+                            .transition(.opacity)
+                    }
                 }
                 .frame(maxWidth: .infinity)
 
@@ -292,8 +317,31 @@ struct HeadPoseCalibrationView: View {
         }
     }
 
+    private func toggleRecording() {
+        if detector.isRecordingEnabled {
+            if let url = detector.stopRecording() {
+                let name = url.lastPathComponent
+                withAnimation {
+                    recordingSavedMessage = "Saved \(detector.recordingFrameCount) frames: \(name)"
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    withAnimation {
+                        recordingSavedMessage = nil
+                    }
+                }
+            }
+        } else {
+            recordingSavedMessage = nil
+            detector.startRecording()
+        }
+    }
+
     private func toggleTest() {
         if isTestActive {
+            // Stop recording if active
+            if detector.isRecordingEnabled {
+                _ = detector.stopRecording()
+            }
             appState.inputCoordinator.stopCalibration()
             deltaPitch = 0
             signedYawDelta = 0

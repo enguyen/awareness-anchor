@@ -3,18 +3,300 @@ import Vision
 import AVFoundation
 import AppKit
 
-enum HeadPose {
+enum HeadPose: Equatable {
     case neutral
     case tiltUp      // Pitch > threshold -> "Already present"
     case turnLeftRight  // Yaw > threshold -> "Returned to awareness"
 }
 
 /// Screen edge for gaze direction indicator
-enum GazeEdge {
+enum GazeEdge: Equatable {
     case none
     case top      // Looking up
     case left     // Turned left
     case right    // Turned right
+}
+
+// MARK: - HeadPoseEngine (pure, testable trigger logic)
+
+/// A single frame of recorded face-tracking data for replay in tests.
+struct PoseFrame {
+    let pitch: Float
+    let yaw: Float
+    let boundingBoxWidth: Float
+    let timestamp: TimeInterval
+}
+
+/// How thresholds are resolved per frame.
+enum ThresholdMode: Equatable {
+    /// Fixed thresholds (external monitor / manual configuration).
+    case manual(pitch: Float, yaw: Float)
+    /// Geometric thresholds computed from bounding box width + screen geometry each frame.
+    case auto(screenWidthMeters: Float, screenHeightMeters: Float,
+              cameraHFOVDegrees: Float, sensitivityMultiplier: Float)
+}
+
+/// Configuration for HeadPoseEngine — all values needed to reproduce trigger behavior.
+struct EngineConfig: Equatable {
+    var thresholdMode: ThresholdMode = .manual(pitch: 0.16, yaw: 0.28)
+    var smoothingFactor: Float = 0.5
+    var dwellTime: Float = 0.2
+    var framesToSkip: Int = 5
+    var orthogonalSettleThreshold: Float = 0.02
+}
+
+/// Events emitted by HeadPoseEngine — no side effects, just data.
+enum EngineEvent: Equatable {
+    case triggered(pose: HeadPose, edge: GazeEdge)
+    case returnedToNeutral
+    case baselineSet(pitch: Float, yaw: Float)
+    case dwellProgress(Float)
+    case dwellBlocked
+    case gazeUpdate(pitchDelta: Float, signedYawDelta: Float,
+                    topIntensity: Float, leftIntensity: Float, rightIntensity: Float,
+                    normalizedYaw: Float, normalizedPitch: Float,
+                    gazeEdge: GazeEdge, gazeIntensity: Float)
+    case autoThresholdsComputed(pitch: Float, yaw: Float, distance: Float)
+    case skippingFrame
+}
+
+/// Pure, side-effect-free engine that processes face pose frames and emits events.
+/// Tests feed it PoseFrame sequences and assert on returned events.
+struct HeadPoseEngine {
+    var config: EngineConfig
+
+    // Mutable state
+    private(set) var baselinePitch: Float?
+    private(set) var baselineYaw: Float?
+    private var smoothedPitch: Float = 0
+    private var smoothedYaw: Float = 0
+    private var isFirstReading = true
+    private var framesToSkip: Int = 0
+    private var dwellStartTimestamp: TimeInterval?
+    private var currentDwellPose: HeadPose = .neutral
+    private(set) var requiresReturnToNeutral: Bool = false
+    var isInCooldown: Bool = false
+    private var previousPitchDelta: Float?
+    private var previousSignedYawDelta: Float?
+
+    // Auto threshold state (readable by detector for UI)
+    private(set) var autoComputedPitchThreshold: Float = 0
+    private(set) var autoComputedYawThreshold: Float = 0
+    private(set) var estimatedFaceDistanceMeters: Float = 0
+
+    init(config: EngineConfig) {
+        self.config = config
+        self.framesToSkip = config.framesToSkip
+    }
+
+    /// Feed a single frame. Returns zero or more events.
+    mutating func feed(pitch: Float, yaw: Float,
+                       boundingBoxWidth: Float,
+                       at timestamp: TimeInterval) -> [EngineEvent] {
+        var events: [EngineEvent] = []
+
+        // Skip initial frames for camera stabilization
+        if framesToSkip > 0 {
+            framesToSkip -= 1
+            events.append(.skippingFrame)
+            return events
+        }
+
+        // IIR smoothing
+        let alpha = 1.0 - config.smoothingFactor
+        if isFirstReading {
+            smoothedPitch = pitch
+            smoothedYaw = yaw
+            isFirstReading = false
+        } else {
+            smoothedPitch = alpha * pitch + config.smoothingFactor * smoothedPitch
+            smoothedYaw = alpha * yaw + config.smoothingFactor * smoothedYaw
+        }
+
+        // Establish baseline on first stable reading
+        if baselinePitch == nil {
+            baselinePitch = smoothedPitch
+            baselineYaw = smoothedYaw
+            events.append(.baselineSet(pitch: smoothedPitch, yaw: smoothedYaw))
+
+            // Compute auto thresholds at baseline if in auto mode
+            if case .auto = config.thresholdMode {
+                events.append(contentsOf: computeAutoThresholds(boundingBoxWidth: boundingBoxWidth))
+            }
+            return events
+        }
+
+        let pitchDelta = smoothedPitch - (baselinePitch ?? 0)
+        let signedYawDelta = smoothedYaw - (baselineYaw ?? 0)
+        let yawDelta = abs(signedYawDelta)
+
+        // Orthogonal stillness tracking
+        let pitchSpeed = abs(pitchDelta - (previousPitchDelta ?? pitchDelta))
+        let yawSpeed = abs(signedYawDelta - (previousSignedYawDelta ?? signedYawDelta))
+        previousPitchDelta = pitchDelta
+        previousSignedYawDelta = signedYawDelta
+
+        // Resolve effective thresholds
+        let (currentPitchThreshold, currentYawThreshold) = effectiveThresholds(boundingBoxWidth: boundingBoxWidth)
+
+        // Emit gaze update for UI
+        let yawIntensity = currentYawThreshold > 0 ? min(abs(signedYawDelta) / currentYawThreshold, 1.0) : 0
+        let pitchIntensity = currentPitchThreshold > 0 ? min(abs(pitchDelta) / currentPitchThreshold, 1.0) : 0
+
+        let topI: Float = pitchDelta < -0.02 ? pitchIntensity : 0
+        let leftI: Float = signedYawDelta > 0.02 ? yawIntensity : 0
+        let rightI: Float = signedYawDelta < -0.02 ? yawIntensity : 0
+
+        let normalizedYaw = currentYawThreshold > 0
+            ? (1.0 - min(max(signedYawDelta / currentYawThreshold, -1.0), 1.0)) / 2.0
+            : 0.5
+        let normalizedPitch = currentPitchThreshold > 0
+            ? (1.0 - min(max(pitchDelta / currentPitchThreshold, -1.0), 1.0)) / 2.0
+            : 0.5
+
+        let gazeEdge: GazeEdge
+        let gazeInt: Float
+        if signedYawDelta > 0.02 && yawIntensity > pitchIntensity {
+            gazeEdge = .left
+            gazeInt = yawIntensity
+        } else if signedYawDelta < -0.02 && yawIntensity > pitchIntensity {
+            gazeEdge = .right
+            gazeInt = yawIntensity
+        } else if pitchDelta < -0.02 {
+            gazeEdge = .top
+            gazeInt = pitchIntensity
+        } else {
+            gazeEdge = .none
+            gazeInt = 0
+        }
+
+        events.append(.gazeUpdate(
+            pitchDelta: pitchDelta, signedYawDelta: signedYawDelta,
+            topIntensity: topI, leftIntensity: leftI, rightIntensity: rightI,
+            normalizedYaw: normalizedYaw, normalizedPitch: normalizedPitch,
+            gazeEdge: gazeEdge, gazeIntensity: gazeInt
+        ))
+
+        // Pose detection
+        var detectedPose: HeadPose = .neutral
+        if yawDelta > currentYawThreshold {
+            detectedPose = .turnLeftRight
+        } else if pitchDelta < -currentPitchThreshold {
+            detectedPose = .tiltUp
+        }
+
+        // Dwell tracking
+        if detectedPose != .neutral {
+            if requiresReturnToNeutral || isInCooldown {
+                events.append(.dwellBlocked)
+                return events
+            }
+
+            if detectedPose == currentDwellPose, let startTime = dwellStartTimestamp {
+                // Orthogonal stillness check
+                let isSettled: Bool
+                if detectedPose == .tiltUp {
+                    isSettled = yawSpeed < config.orthogonalSettleThreshold
+                } else {
+                    isSettled = pitchSpeed < config.orthogonalSettleThreshold
+                }
+                if !isSettled {
+                    dwellStartTimestamp = timestamp
+                }
+
+                let elapsed = Float(timestamp - (dwellStartTimestamp ?? startTime))
+                let progress = min(elapsed / config.dwellTime, 1.0)
+                events.append(.dwellProgress(progress))
+
+                if elapsed >= config.dwellTime {
+                    // Trigger!
+                    let triggeredEdge: GazeEdge
+                    if detectedPose == .tiltUp {
+                        triggeredEdge = .top
+                    } else if signedYawDelta > 0 {
+                        triggeredEdge = .left
+                    } else {
+                        triggeredEdge = .right
+                    }
+
+                    requiresReturnToNeutral = true
+                    events.append(.triggered(pose: detectedPose, edge: triggeredEdge))
+
+                    // Reset dwell
+                    dwellStartTimestamp = nil
+                    currentDwellPose = .neutral
+                }
+            } else {
+                // New pose, start dwell
+                dwellStartTimestamp = timestamp
+                currentDwellPose = detectedPose
+                events.append(.dwellProgress(0))
+            }
+        } else {
+            // Neutral — reset dwell
+            if dwellStartTimestamp != nil || currentDwellPose != .neutral {
+                dwellStartTimestamp = nil
+                currentDwellPose = .neutral
+                events.append(.dwellProgress(0))
+            }
+
+            if requiresReturnToNeutral {
+                requiresReturnToNeutral = false
+                events.append(.returnedToNeutral)
+            }
+        }
+
+        return events
+    }
+
+    /// Reset all mutable state (for new window/calibration session).
+    mutating func reset() {
+        baselinePitch = nil
+        baselineYaw = nil
+        smoothedPitch = 0
+        smoothedYaw = 0
+        isFirstReading = true
+        framesToSkip = config.framesToSkip
+        dwellStartTimestamp = nil
+        currentDwellPose = .neutral
+        requiresReturnToNeutral = false
+        isInCooldown = false
+        previousPitchDelta = nil
+        previousSignedYawDelta = nil
+        autoComputedPitchThreshold = 0
+        autoComputedYawThreshold = 0
+        estimatedFaceDistanceMeters = 0
+    }
+
+    // MARK: - Threshold resolution
+
+    func effectiveThresholds(boundingBoxWidth: Float) -> (pitch: Float, yaw: Float) {
+        switch config.thresholdMode {
+        case .manual(let pitch, let yaw):
+            return (pitch, yaw)
+        case .auto(let screenW, let screenH, let hfov, let mult):
+            let distance = DisplayGeometry.estimateFaceDistance(boundingBoxWidth: boundingBoxWidth, cameraHFOVDegrees: hfov)
+            guard distance > 0 else { return (0, 0) }
+            let rawPitch = DisplayGeometry.computePitchThreshold(screenHeightMeters: screenH, faceDistanceMeters: distance)
+            let rawYaw = DisplayGeometry.computeYawThreshold(screenWidthMeters: screenW, faceDistanceMeters: distance)
+            return (rawPitch * mult, rawYaw * mult)
+        }
+    }
+
+    private mutating func computeAutoThresholds(boundingBoxWidth bbW: Float) -> [EngineEvent] {
+        guard case .auto(let screenW, let screenH, let hfov, _) = config.thresholdMode else { return [] }
+        let distance = DisplayGeometry.estimateFaceDistance(boundingBoxWidth: bbW, cameraHFOVDegrees: hfov)
+        guard distance > 0 else { return [] }
+
+        let rawPitch = DisplayGeometry.computePitchThreshold(screenHeightMeters: screenH, faceDistanceMeters: distance)
+        let rawYaw = DisplayGeometry.computeYawThreshold(screenWidthMeters: screenW, faceDistanceMeters: distance)
+
+        autoComputedPitchThreshold = rawPitch
+        autoComputedYawThreshold = rawYaw
+        estimatedFaceDistanceMeters = distance
+
+        return [.autoThresholdsComputed(pitch: rawPitch, yaw: rawYaw, distance: distance)]
+    }
 }
 
 /// Geometry helpers for computing head pose thresholds from known laptop screen dimensions.
@@ -129,6 +411,10 @@ class HeadPoseDetector: NSObject, ObservableObject {
     private var isWindowActive = false
     private var isCalibrationMode = false
 
+    // MARK: - Pure engine (delegated trigger logic)
+    private var engine: HeadPoseEngine = HeadPoseEngine(config: EngineConfig())
+    private var sessionStartTime: Date = Date()
+
     // Configurable thresholds - stored in UserDefaults
     var pitchThreshold: Float {
         get { Float(UserDefaults.standard.double(forKey: "pitchThreshold").nonZeroOr(0.16)) }
@@ -185,26 +471,14 @@ class HeadPoseDetector: NSObject, ObservableObject {
         return yawThreshold
     }
 
-    // Track baseline pose
-    private var baselinePitch: Float?
-    private var baselineYaw: Float?
     private var hasRespondedThisWindow = false
 
-    // IIR smoothing state
-    private var smoothedPitch: Float = 0
-    private var smoothedYaw: Float = 0
-    private var isFirstReading = true
-
-    // Dwell time tracking
-    private var dwellStartTime: Date?
-    private var currentDwellPose: HeadPose = .neutral
     @Published var dwellProgress: Float = 0  // 0 to 1, for UI display
 
-    // Prevent re-triggering until user returns to neutral
-    private var requiresReturnToNeutral: Bool = false
-
     // External cooldown flag - set by AppDelegate to prevent triggers during cooldown period
-    @Published var isInCooldown: Bool = false
+    @Published var isInCooldown: Bool = false {
+        didSet { engine.isInCooldown = isInCooldown }
+    }
 
     // Face check mode: briefly start camera to detect face presence before chime
     private var isCheckingForFace = false
@@ -215,10 +489,11 @@ class HeadPoseDetector: NSObject, ObservableObject {
     private var preChimePitch: Float?
     private var preChimeYaw: Float?
 
-    // Orthogonal stillness tracking: frame-to-frame delta rates
-    private var previousPitchDelta: Float?
-    private var previousSignedYawDelta: Float?
-    private let orthogonalSettleThreshold: Float = 0.02  // radians per frame
+    // MARK: - Recording (for test case capture)
+    @Published var isRecordingEnabled = false
+    @Published var recordingFrameCount: Int = 0
+    private var recordingBuffer: [(pitch: Float, yaw: Float, bbw: Float, t: TimeInterval)] = []
+    private var recordingStartTime: Date?
 
     func startDetection() {
         guard captureSession == nil else { return }
@@ -295,6 +570,23 @@ class HeadPoseDetector: NSObject, ObservableObject {
         }
     }
 
+    /// Sync engine config from current UserDefaults / auto-threshold state.
+    private func syncEngineConfig() {
+        let mode: ThresholdMode
+        if isAutoThresholdActive, let screenSize = DisplayGeometry.screenSizeMeters {
+            mode = .auto(screenWidthMeters: screenSize.width,
+                         screenHeightMeters: screenSize.height,
+                         cameraHFOVDegrees: cameraHFOVDegrees,
+                         sensitivityMultiplier: autoSensitivityMultiplier)
+        } else {
+            mode = .manual(pitch: pitchThreshold, yaw: yawThreshold)
+        }
+        engine.config.thresholdMode = mode
+        engine.config.smoothingFactor = smoothingFactor
+        engine.config.dwellTime = dwellTime
+        engine.isInCooldown = isInCooldown
+    }
+
     func activateForWindow() {
         guard isActive else {
             appLog("[HP]activateForWindow called but detector not active")
@@ -305,23 +597,10 @@ class HeadPoseDetector: NSObject, ObservableObject {
         isWindowActive = true
         hasRespondedThisWindow = false
         faceWasDetectedThisWindow = false
-        baselinePitch = nil
-        baselineYaw = nil
-        isFirstReading = true
-        smoothedPitch = 0
-        smoothedYaw = 0
-        framesToSkip = 5  // Skip first frames to let camera and face tracking stabilize (~330ms)
-        dwellStartTime = nil
-        currentDwellPose = .neutral
-        requiresReturnToNeutral = false
-        previousPitchDelta = nil
-        previousSignedYawDelta = nil
+        sessionStartTime = Date()
 
-        // Always capture baseline from first stable frames — even in auto mode,
-        // because the camera is above the screen and neutral gaze has significant
-        // negative pitch relative to camera axis.
-        baselinePitch = nil
-        baselineYaw = nil
+        syncEngineConfig()
+        engine.reset()
 
         // Discard pre-chime pose — single-frame snapshots are unreliable and poison
         // the smoother if they differ from the stabilized tracking position.
@@ -364,9 +643,6 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
     // MARK: - Calibration Mode
 
-    // Number of frames to skip before setting baseline (lets camera stabilize)
-    private var framesToSkip: Int = 0
-
     func startCalibration() {
         // Set up capture session if needed
         if captureSession == nil && !isActive {
@@ -377,20 +653,10 @@ class HeadPoseDetector: NSObject, ObservableObject {
         isCalibrationMode = true
         isWindowActive = true
         hasRespondedThisWindow = false
-        isFirstReading = true
-        smoothedPitch = 0
-        smoothedYaw = 0
-        framesToSkip = 5  // Skip first frames to let camera and face tracking stabilize (~330ms)
-        dwellStartTime = nil
-        currentDwellPose = .neutral
-        requiresReturnToNeutral = false
-        previousPitchDelta = nil
-        previousSignedYawDelta = nil
+        sessionStartTime = Date()
 
-        // Always capture baseline from first stable frames (camera is above screen,
-        // so neutral gaze has negative pitch — (0,0) would trigger immediately)
-        baselinePitch = nil
-        baselineYaw = nil
+        syncEngineConfig()
+        engine.reset()
 
         DispatchQueue.main.async {
             self.isCalibrationActive = true
@@ -426,15 +692,10 @@ class HeadPoseDetector: NSObject, ObservableObject {
     }
 
     func resetCalibrationBaseline() {
-        baselinePitch = nil
-        baselineYaw = nil
         hasRespondedThisWindow = false
-        isFirstReading = true
-        dwellStartTime = nil
-        currentDwellPose = .neutral
-        requiresReturnToNeutral = false
-        previousPitchDelta = nil
-        previousSignedYawDelta = nil
+        sessionStartTime = Date()
+        syncEngineConfig()
+        engine.reset()
         DispatchQueue.main.async {
             self.debugBaseline = "Waiting for baseline..."
             self.debugPitch = 0
@@ -522,9 +783,19 @@ class HeadPoseDetector: NSObject, ObservableObject {
                     appLog("[HP] Pre-chime pose captured: pitch=\(p), yaw=\(y)")
                 }
 
-                // Compute auto thresholds from face bounding box
+                // Compute auto thresholds from face bounding box (pre-chime)
                 if DisplayGeometry.isLaptopOnly {
-                    self.computeAutoThresholds(boundingBoxWidth: Float(face.boundingBox.width))
+                    let bbW = Float(face.boundingBox.width)
+                    let dist = DisplayGeometry.estimateFaceDistance(boundingBoxWidth: bbW, cameraHFOVDegrees: self.cameraHFOVDegrees)
+                    if dist > 0, let screenSize = DisplayGeometry.screenSizeMeters {
+                        let rawPitch = DisplayGeometry.computePitchThreshold(screenHeightMeters: screenSize.height, faceDistanceMeters: dist)
+                        let rawYaw = DisplayGeometry.computeYawThreshold(screenWidthMeters: screenSize.width, faceDistanceMeters: dist)
+                        DispatchQueue.main.async {
+                            self.estimatedFaceDistanceMeters = dist
+                            self.autoComputedPitchThreshold = rawPitch
+                            self.autoComputedYawThreshold = rawYaw
+                        }
+                    }
                 }
 
                 DispatchQueue.main.async {
@@ -548,255 +819,117 @@ class HeadPoseDetector: NSObject, ObservableObject {
         // Mark that we detected a face at some point during this window
         faceWasDetectedThisWindow = true
 
-        // VNFaceObservation provides pitch, yaw, roll as optional properties
-        // Debug: print what we got
         appLog("[HP]Face found - pitch: \(String(describing: face.pitch)), yaw: \(String(describing: face.yaw)), roll: \(String(describing: face.roll))")
 
         guard let pitch = face.pitch?.floatValue,
               let yaw = face.yaw?.floatValue else {
             DispatchQueue.main.async {
-                self.faceDetected = true  // Face IS detected, just no pose data
+                self.faceDetected = true
                 self.debugBaseline = "Face found, no pose data"
             }
             appLog("[HP]No pitch/yaw data available (face detected but pose nil)")
             return
         }
 
-        // Skip first few frames to let camera stabilize
-        if framesToSkip > 0 {
-            framesToSkip -= 1
+        let bbw = Float(face.boundingBox.width)
+        let timestamp = Date().timeIntervalSince(sessionStartTime)
+
+        // Record frame if recording is active
+        if isRecordingEnabled {
+            let t = Date().timeIntervalSince(recordingStartTime ?? Date())
+            recordingBuffer.append((pitch: pitch, yaw: yaw, bbw: bbw, t: t))
             DispatchQueue.main.async {
-                self.faceDetected = true
-                self.debugBaseline = "Stabilizing camera..."
-            }
-            return
-        }
-
-        // Apply IIR smoothing filter
-        // Formula: smoothed = alpha * new + (1 - alpha) * smoothed
-        // where alpha = 1 - smoothingFactor
-        let alpha = 1.0 - smoothingFactor
-        if isFirstReading {
-            smoothedPitch = pitch
-            smoothedYaw = yaw
-            isFirstReading = false
-        } else {
-            smoothedPitch = alpha * pitch + smoothingFactor * smoothedPitch
-            smoothedYaw = alpha * yaw + smoothingFactor * smoothedYaw
-        }
-
-        // Establish baseline on first reading (after smoothing kicks in)
-        // Always use the actual smoothed face pose — even in auto/laptop mode,
-        // because the camera is above the screen and neutral gaze has negative pitch.
-        if baselinePitch == nil {
-            baselinePitch = smoothedPitch
-            baselineYaw = smoothedYaw
-            appLog("[HP]Baseline set: pitch=\(smoothedPitch), yaw=\(smoothedYaw) (auto=\(isAutoThresholdActive))")
-
-            // Compute auto thresholds from current face bbox
-            if DisplayGeometry.isLaptopOnly {
-                computeAutoThresholds(boundingBoxWidth: Float(face.boundingBox.width))
-            }
-
-            DispatchQueue.main.async {
-                self.debugBaseline = String(format: "Baseline: P=%.2f, Y=%.2f", self.baselinePitch ?? 0, self.baselineYaw ?? 0)
-            }
-            return
-        }
-
-        let pitchDelta = smoothedPitch - (baselinePitch ?? 0)
-        let signedYawDelta = smoothedYaw - (baselineYaw ?? 0)
-        let yawDelta = abs(signedYawDelta)
-
-        // Orthogonal stillness: track frame-to-frame rate of change
-        let pitchSpeed = abs(pitchDelta - (previousPitchDelta ?? pitchDelta))
-        let yawSpeed = abs(signedYawDelta - (previousSignedYawDelta ?? signedYawDelta))
-        previousPitchDelta = pitchDelta
-        previousSignedYawDelta = signedYawDelta
-
-        // Update debug values and gaze edge on main thread
-        DispatchQueue.main.async {
-            self.faceDetected = true
-            self.debugPitch = pitchDelta
-            self.debugYaw = yawDelta
-            self.debugRawPitch = pitch
-            self.debugRawYaw = yaw
-
-            // Update gaze edge and intensity for screen glow indicator
-            // Intensity goes from 0 (center) to 1 (at threshold)
-            let yawThresh = self.effectiveYawThreshold
-            let pitchThresh = self.effectivePitchThreshold
-
-            // Calculate intensity as ratio of delta to threshold (clamped 0-1)
-            let yawIntensity = min(abs(signedYawDelta) / yawThresh, 1.0)
-            let pitchIntensity = min(abs(pitchDelta) / pitchThresh, 1.0)
-
-            // Update separate intensities for multi-directional glow
-            // Top: only when tilting up (negative pitch delta)
-            self.topIntensity = pitchDelta < -0.02 ? pitchIntensity : 0
-
-            // Left: positive yaw = looking left (camera mirror)
-            self.leftIntensity = signedYawDelta > 0.02 ? yawIntensity : 0
-
-            // Right: negative yaw = looking right (camera mirror)
-            self.rightIntensity = signedYawDelta < -0.02 ? yawIntensity : 0
-
-            // Update normalized gaze position for bulge effect
-            // Yaw: positive yaw = looking left, map to screen X position
-            let normalizedYaw = min(max(signedYawDelta / yawThresh, -1.0), 1.0)
-            // When looking left (+yaw), bulge should be on left side (low X), so invert
-            self.normalizedYawPosition = (1.0 - normalizedYaw) / 2.0  // Range: 0 (looking right) to 1 (looking left)
-
-            // Pitch: negative pitch = looking up, map to screen Y position
-            let normalizedPitch = min(max(pitchDelta / pitchThresh, -1.0), 1.0)
-            // When looking up (-pitch), bulge should be at top (high Y), so invert the negative
-            self.normalizedPitchPosition = (1.0 - normalizedPitch) / 2.0  // Range: 0 (looking down) to 1 (looking up)
-
-            // Determine primary edge based on which direction has highest intensity (for legacy compatibility)
-            // Swap left/right: positive yaw = looking left, negative = looking right (camera mirror)
-            if signedYawDelta > 0.02 && yawIntensity > pitchIntensity {
-                self.currentGazeEdge = .left  // Positive yaw = left
-                self.gazeIntensity = yawIntensity
-            } else if signedYawDelta < -0.02 && yawIntensity > pitchIntensity {
-                self.currentGazeEdge = .right  // Negative yaw = right
-                self.gazeIntensity = yawIntensity
-            } else if pitchDelta < -0.02 {
-                self.currentGazeEdge = .top
-                self.gazeIntensity = pitchIntensity
-            } else {
-                self.currentGazeEdge = .none
-                self.gazeIntensity = 0
+                self.recordingFrameCount = self.recordingBuffer.count
             }
         }
 
-        // Send calibration updates if in calibration mode
-        if isCalibrationMode {
-            DispatchQueue.main.async {
-                self.onCalibrationUpdate?(pitch, yaw, pitchDelta, yawDelta, signedYawDelta)
-            }
-        }
+        // Delegate to pure engine
+        let events = engine.feed(pitch: pitch, yaw: yaw, boundingBoxWidth: bbw, at: timestamp)
 
-        appLog("[HP]Delta: pitch=\(pitchDelta), yaw=\(yawDelta), yawSpd=\(String(format: "%.4f", yawSpeed)), pitchSpd=\(String(format: "%.4f", pitchSpeed))")
-
-        // Gesture priority: YAW takes precedence over PITCH
-        //
-        // When yaw exceeds its threshold, it wins (turnLeftRight). Otherwise,
-        // pitch is evaluated independently. The orthogonal stillness check
-        // prevents false triggers during active re-centering movement.
-
-        // Get current thresholds (auto-computed or manual)
-        let currentPitchThreshold = effectivePitchThreshold
-        let currentYawThreshold = effectiveYawThreshold
-        let currentDwellTime = dwellTime
-
-        // Determine which pose is detected (if any)
-        var detectedPose: HeadPose = .neutral
-
-        if yawDelta > currentYawThreshold {
-            // Turning head left/right -> "Returned to awareness"
-            detectedPose = .turnLeftRight
-        } else if pitchDelta < -currentPitchThreshold {
-            // Tilt up -> "Already present" (orthogonal stillness gates the dwell)
-            detectedPose = .tiltUp
-        }
-
-        // Dwell time tracking
-        if detectedPose != .neutral {
-            // Don't start new dwell if we're waiting for return to neutral or in cooldown
-            if requiresReturnToNeutral || isInCooldown {
-                appLog("[HP]Dwell BLOCKED: rtn=\(requiresReturnToNeutral) cool=\(isInCooldown) pose=\(detectedPose)")
-                return
-            }
-
-            if detectedPose == currentDwellPose, let startTime = dwellStartTime {
-                // Orthogonal stillness: pause dwell if user is still re-centering on the other axis
-                let isSettled: Bool
-                if detectedPose == .tiltUp {
-                    isSettled = yawSpeed < orthogonalSettleThreshold
-                } else {
-                    isSettled = pitchSpeed < orthogonalSettleThreshold
-                }
-                if !isSettled {
-                    dwellStartTime = Date()  // Push dwell forward — still re-centering
-                    appLog("[HP]Dwell PUSHED: pose=\(detectedPose) yawSpd=\(String(format: "%.4f", yawSpeed)) pitchSpd=\(String(format: "%.4f", pitchSpeed))")
+        // Dispatch engine events to published properties and callbacks
+        for event in events {
+            switch event {
+            case .skippingFrame:
+                DispatchQueue.main.async {
+                    self.faceDetected = true
+                    self.debugBaseline = "Stabilizing camera..."
                 }
 
-                // Same pose, check if dwell time exceeded
-                let elapsed = Float(Date().timeIntervalSince(dwellStartTime ?? startTime))
-                appLog("[HP]Dwell: pose=\(detectedPose) elapsed=\(String(format: "%.3f", elapsed))s/\(currentDwellTime)s settled=\(isSettled)")
-                let progress = min(elapsed / currentDwellTime, 1.0)
+            case .baselineSet(let bPitch, let bYaw):
+                appLog("[HP]Baseline set: pitch=\(bPitch), yaw=\(bYaw) (auto=\(self.isAutoThresholdActive))")
+                DispatchQueue.main.async {
+                    self.faceDetected = true
+                    self.debugBaseline = String(format: "Baseline: P=%.2f, Y=%.2f", bPitch, bYaw)
+                }
 
+            case .autoThresholdsComputed(let rawPitch, let rawYaw, let distance):
+                appLog("[HP] Auto threshold: dist=\(String(format: "%.2f", distance))m, pitch=\(String(format: "%.3f", rawPitch)), yaw=\(String(format: "%.3f", rawYaw))")
+                DispatchQueue.main.async {
+                    self.estimatedFaceDistanceMeters = distance
+                    self.autoComputedPitchThreshold = rawPitch
+                    self.autoComputedYawThreshold = rawYaw
+                }
+
+            case .gazeUpdate(let pitchDelta, let signedYawDelta, let topI, let leftI, let rightI,
+                             let normYaw, let normPitch, let edge, let intensity):
+                let yawDelta = abs(signedYawDelta)
+                DispatchQueue.main.async {
+                    self.faceDetected = true
+                    self.debugPitch = pitchDelta
+                    self.debugYaw = yawDelta
+                    self.debugRawPitch = pitch
+                    self.debugRawYaw = yaw
+                    self.topIntensity = topI
+                    self.leftIntensity = leftI
+                    self.rightIntensity = rightI
+                    self.normalizedYawPosition = normYaw
+                    self.normalizedPitchPosition = normPitch
+                    self.currentGazeEdge = edge
+                    self.gazeIntensity = intensity
+                }
+
+                // Calibration callback
+                if self.isCalibrationMode {
+                    DispatchQueue.main.async {
+                        self.onCalibrationUpdate?(pitch, yaw, pitchDelta, yawDelta, signedYawDelta)
+                    }
+                }
+
+            case .dwellProgress(let progress):
                 DispatchQueue.main.async {
                     self.dwellProgress = progress
                 }
 
-                if elapsed >= currentDwellTime {
-                    // Dwell time exceeded - trigger!
-                    if detectedPose == .turnLeftRight {
-                        appLog("[HP]TRIGGERED: Turn Left/Right (Returned) - yaw=\(yawDelta) > \(currentYawThreshold), dwell=\(elapsed)s")
-                    } else {
-                        appLog("[HP]TRIGGERED: Tilt Up (Present) - pitch=\(pitchDelta) < -\(currentPitchThreshold), dwell=\(elapsed)s")
-                    }
+            case .dwellBlocked:
+                appLog("[HP]Dwell BLOCKED: rtn=\(self.engine.requiresReturnToNeutral) cool=\(self.isInCooldown)")
 
-                    // Determine triggered edge for wink animation
-                    let triggeredEdge: GazeEdge
-                    if detectedPose == .tiltUp {
-                        triggeredEdge = .top
-                    } else if signedYawDelta > 0 {
-                        triggeredEdge = .left  // Positive yaw = left (camera mirror)
-                    } else {
-                        triggeredEdge = .right
-                    }
+            case .triggered(let pose, let triggeredEdge):
+                if pose == .turnLeftRight {
+                    appLog("[HP]TRIGGERED: Turn Left/Right (Returned)")
+                } else {
+                    appLog("[HP]TRIGGERED: Tilt Up (Present)")
+                }
 
-                    // Require return to neutral before next trigger
-                    requiresReturnToNeutral = true
+                DispatchQueue.main.async {
+                    self.isAwaitingReturnToNeutral = true
+                }
+
+                if self.isCalibrationMode {
                     DispatchQueue.main.async {
-                        self.isAwaitingReturnToNeutral = true
+                        self.dwellProgress = 0
+                        self.onGazeTrigger?(triggeredEdge)
+                        self.onCalibrationTriggered?(pose, triggeredEdge)
                     }
-
-                    if isCalibrationMode {
-                        // Don't set hasRespondedThisWindow in calibration mode
-                        // to allow repeated triggers for testing
-                        DispatchQueue.main.async {
-                            self.dwellProgress = 0
-                            self.onGazeTrigger?(triggeredEdge)
-                            self.onCalibrationTriggered?(detectedPose, triggeredEdge)
-                        }
-                    } else {
-                        hasRespondedThisWindow = true
-                        DispatchQueue.main.async {
-                            self.dwellProgress = 0
-                            self.onGazeTrigger?(triggeredEdge)
-                            self.onPoseDetected?(detectedPose)
-                        }
+                } else {
+                    self.hasRespondedThisWindow = true
+                    DispatchQueue.main.async {
+                        self.dwellProgress = 0
+                        self.onGazeTrigger?(triggeredEdge)
+                        self.onPoseDetected?(pose)
                     }
+                }
 
-                    // Reset dwell tracking completely after trigger
-                    dwellStartTime = nil
-                    currentDwellPose = .neutral
-                }
-            } else {
-                // New pose detected, start dwell timer
-                appLog("[HP]Dwell NEW: pose=\(detectedPose) (was \(currentDwellPose))")
-                dwellStartTime = Date()
-                currentDwellPose = detectedPose
-                DispatchQueue.main.async {
-                    self.dwellProgress = 0
-                }
-            }
-        } else {
-            // Back to neutral, reset dwell tracking and allow new triggers
-            if dwellStartTime != nil || currentDwellPose != .neutral {
-                dwellStartTime = nil
-                currentDwellPose = .neutral
-                DispatchQueue.main.async {
-                    self.dwellProgress = 0
-                }
-            }
-
-            // Fire callback when returning to neutral after a trigger
-            if requiresReturnToNeutral {
-                requiresReturnToNeutral = false
+            case .returnedToNeutral:
                 DispatchQueue.main.async {
                     self.isAwaitingReturnToNeutral = false
                     self.onReturnToNeutral?()
@@ -804,21 +937,75 @@ class HeadPoseDetector: NSObject, ObservableObject {
             }
         }
     }
-    // MARK: - Auto Threshold Computation
 
-    private func computeAutoThresholds(boundingBoxWidth bbW: Float) {
-        let distance = DisplayGeometry.estimateFaceDistance(boundingBoxWidth: bbW, cameraHFOVDegrees: cameraHFOVDegrees)
-        guard distance > 0, let screenSize = DisplayGeometry.screenSizeMeters else { return }
+    // MARK: - Recording
 
-        let rawPitch = DisplayGeometry.computePitchThreshold(screenHeightMeters: screenSize.height, faceDistanceMeters: distance)
-        let rawYaw = DisplayGeometry.computeYawThreshold(screenWidthMeters: screenSize.width, faceDistanceMeters: distance)
-
-        appLog("[HP] Auto threshold: bbW=\(String(format: "%.3f", bbW)), dist=\(String(format: "%.2f", distance))m, pitch=\(String(format: "%.3f", rawPitch)), yaw=\(String(format: "%.3f", rawYaw))")
-
+    func startRecording() {
+        recordingBuffer = []
+        recordingStartTime = Date()
         DispatchQueue.main.async {
-            self.estimatedFaceDistanceMeters = distance
-            self.autoComputedPitchThreshold = rawPitch
-            self.autoComputedYawThreshold = rawYaw
+            self.recordingFrameCount = 0
+            self.isRecordingEnabled = true
+        }
+        appLog("[HP] Recording started")
+    }
+
+    func stopRecording() -> URL? {
+        DispatchQueue.main.async {
+            self.isRecordingEnabled = false
+        }
+        appLog("[HP] Recording stopped (\(recordingBuffer.count) frames)")
+
+        guard !recordingBuffer.isEmpty else { return nil }
+
+        // Build JSON with metadata
+        let metadata: [String: Any]
+        if isAutoThresholdActive, let screenSize = DisplayGeometry.screenSizeMeters {
+            metadata = [
+                "displayMode": "laptop",
+                "screenWidthMeters": screenSize.width,
+                "screenHeightMeters": screenSize.height,
+                "cameraHFOVDegrees": cameraHFOVDegrees,
+                "sensitivityMultiplier": autoSensitivityMultiplier
+            ]
+        } else {
+            metadata = [
+                "displayMode": "external",
+                "manualPitchThreshold": pitchThreshold,
+                "manualYawThreshold": yawThreshold
+            ]
+        }
+
+        let frames = recordingBuffer.map { frame -> [String: Any] in
+            [
+                "pitch": Double(String(format: "%.4f", frame.pitch))!,
+                "yaw": Double(String(format: "%.4f", frame.yaw))!,
+                "bbw": Double(String(format: "%.4f", frame.bbw))!,
+                "t": Double(String(format: "%.3f", frame.t))!
+            ]
+        }
+
+        let recording: [String: Any] = [
+            "metadata": metadata,
+            "frames": frames
+        ]
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        let filename = "headpose_recording_\(formatter.string(from: Date())).json"
+        let desktopURL = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent(filename)
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: recording, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: desktopURL)
+            appLog("[HP] Recording saved to \(desktopURL.path)")
+            recordingBuffer = []
+            return desktopURL
+        } catch {
+            appLog("[HP] Failed to save recording: \(error)")
+            recordingBuffer = []
+            return nil
         }
     }
 }
