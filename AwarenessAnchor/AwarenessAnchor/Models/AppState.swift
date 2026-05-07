@@ -291,6 +291,12 @@ class AppState: ObservableObject {
                 return
             }
 
+            // Pause countdown while user is mid-gesture (any edge glow showing).
+            // Window stays open until they finish — even if the timer would have hit 0.
+            if self.isRegisteringFeedback {
+                return
+            }
+
             self.responseWindowRemainingSeconds -= 0.1
 
             if self.responseWindowRemainingSeconds <= 0 {
@@ -300,6 +306,16 @@ class AppState: ObservableObject {
 
         // Activate input tracking for this response window
         inputCoordinator.activateForWindow()
+    }
+
+    // True when any edge intensity is high enough that the user appears to be
+    // actively attempting a gesture. Matches the practical visibility floor of
+    // the screen-edge glow.
+    private var isRegisteringFeedback: Bool {
+        let threshold: Float = 0.05
+        return inputCoordinator.topIntensity > threshold ||
+               inputCoordinator.leftIntensity > threshold ||
+               inputCoordinator.rightIntensity > threshold
     }
 
     private func endResponseWindow(responded: Bool) {
