@@ -253,6 +253,24 @@ class InputCoordinator: ObservableObject {
         }
     }
 
+    // MARK: - Correction Mode
+
+    /// Open a hands-free correction window. Both detectors stay live, but only the
+    /// allowed pose will fire a callback and only its glow direction will show.
+    func beginCorrectionMode(allowedPose: HeadPose) {
+        if headPoseEnabled {
+            headPoseDetector.beginCorrectionMode(allowedPose: allowedPose)
+        }
+        if mouseTrackingEnabled {
+            mouseEdgeDetector.beginCorrectionMode(allowedPose: allowedPose)
+        }
+    }
+
+    func endCorrectionMode() {
+        headPoseDetector.endCorrectionMode()
+        mouseEdgeDetector.endCorrectionMode()
+    }
+
     // MARK: - Calibration Mode
 
     func startCalibration() {

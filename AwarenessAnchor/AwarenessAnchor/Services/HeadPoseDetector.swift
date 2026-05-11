@@ -473,6 +473,14 @@ class HeadPoseDetector: NSObject, ObservableObject {
 
     private var hasRespondedThisWindow = false
 
+    // Correction mode: after a response is recorded, the detector keeps running
+    // for a few seconds with one gesture allowed (the opposite of the recorded one)
+    // so the user can swap their answer hands-free.
+    // - Same-pose triggers are dropped before the callback fires.
+    // - Intensities for the disallowed direction are masked to 0, so the screen-edge
+    //   glow never invites the user to perform the same gesture again.
+    private(set) var correctionAllowedPose: HeadPose? = nil
+
     @Published var dwellProgress: Float = 0  // 0 to 1, for UI display
 
     // External cooldown flag - set by AppDelegate to prevent triggers during cooldown period
@@ -639,6 +647,35 @@ class HeadPoseDetector: NSObject, ObservableObject {
             self.leftIntensity = 0
             self.rightIntensity = 0
         }
+    }
+
+    // MARK: - Correction Mode
+
+    /// Re-open detection for a swap. Clears the "already responded" gate so the engine
+    /// can fire a second trigger, but only the allowed pose will be reported through.
+    func beginCorrectionMode(allowedPose: HeadPose) {
+        appLog("[HP] beginCorrectionMode allowed=\(allowedPose)")
+        correctionAllowedPose = allowedPose
+        hasRespondedThisWindow = false
+        DispatchQueue.main.async {
+            self.isAwaitingReturnToNeutral = false
+            // Zero the disallowed direction immediately so the glow doesn't linger.
+            switch allowedPose {
+            case .tiltUp:
+                self.leftIntensity = 0
+                self.rightIntensity = 0
+            case .turnLeftRight:
+                self.topIntensity = 0
+            case .neutral:
+                break
+            }
+        }
+    }
+
+    func endCorrectionMode() {
+        appLog("[HP] endCorrectionMode")
+        correctionAllowedPose = nil
+        hasRespondedThisWindow = true
     }
 
     // MARK: - Calibration Mode
@@ -873,15 +910,32 @@ class HeadPoseDetector: NSObject, ObservableObject {
             case .gazeUpdate(let pitchDelta, let signedYawDelta, let topI, let leftI, let rightI,
                              let normYaw, let normPitch, let edge, let intensity):
                 let yawDelta = abs(signedYawDelta)
+
+                // Mask intensities for the disallowed direction while in correction mode.
+                var publishedTopI = topI
+                var publishedLeftI = leftI
+                var publishedRightI = rightI
+                if let allowed = self.correctionAllowedPose {
+                    switch allowed {
+                    case .tiltUp:
+                        publishedLeftI = 0
+                        publishedRightI = 0
+                    case .turnLeftRight:
+                        publishedTopI = 0
+                    case .neutral:
+                        break
+                    }
+                }
+
                 DispatchQueue.main.async {
                     self.faceDetected = true
                     self.debugPitch = pitchDelta
                     self.debugYaw = yawDelta
                     self.debugRawPitch = pitch
                     self.debugRawYaw = yaw
-                    self.topIntensity = topI
-                    self.leftIntensity = leftI
-                    self.rightIntensity = rightI
+                    self.topIntensity = publishedTopI
+                    self.leftIntensity = publishedLeftI
+                    self.rightIntensity = publishedRightI
                     self.normalizedYawPosition = normYaw
                     self.normalizedPitchPosition = normPitch
                     self.currentGazeEdge = edge
@@ -904,6 +958,12 @@ class HeadPoseDetector: NSObject, ObservableObject {
                 appLog("[HP]Dwell BLOCKED: rtn=\(self.engine.requiresReturnToNeutral) cool=\(self.isInCooldown)")
 
             case .triggered(let pose, let triggeredEdge):
+                // In correction mode only the opposite gesture is allowed through.
+                if let allowed = self.correctionAllowedPose, pose != allowed {
+                    appLog("[HP] correction-mode drop: \(pose) (only \(allowed) allowed)")
+                    break
+                }
+
                 if pose == .turnLeftRight {
                     appLog("[HP]TRIGGERED: Turn Left/Right (Returned)")
                 } else {

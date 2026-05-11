@@ -67,6 +67,11 @@ class MouseEdgeDetector: ObservableObject {
     private var requiresReturnToNeutral: Bool = false
     private var hasRespondedThisWindow: Bool = false
 
+    // Correction mode (see HeadPoseDetector for the same property). When set,
+    // intensities for the disallowed direction are masked to 0 and trigger
+    // callbacks for the disallowed pose are dropped.
+    private(set) var correctionAllowedPose: HeadPose? = nil
+
     // Track current mouse position for speed calculations
     private(set) var lastMousePosition: CGPoint?
     private(set) var lastUpdateTime: Date?
@@ -260,10 +265,25 @@ class MouseEdgeDetector: ObservableObject {
         // - Calibration mode (preview active)
         // - Post-trigger in calibration (glow persists until return to neutral)
         if (isWindowActive && !hasRespondedThisWindow) || isCalibrationMode || (requiresReturnToNeutral && isCalibrationMode) {
+            // Mask intensities for the disallowed direction in correction mode.
+            var publishedTop = Float(rawTopIntensity)
+            var publishedLeft = Float(rawLeftIntensity)
+            var publishedRight = Float(rawRightIntensity)
+            if let allowed = correctionAllowedPose {
+                switch allowed {
+                case .tiltUp:
+                    publishedLeft = 0
+                    publishedRight = 0
+                case .turnLeftRight:
+                    publishedTop = 0
+                case .neutral:
+                    break
+                }
+            }
             DispatchQueue.main.async {
-                self.topIntensity = Float(rawTopIntensity)
-                self.leftIntensity = Float(rawLeftIntensity)
-                self.rightIntensity = Float(rawRightIntensity)
+                self.topIntensity = publishedTop
+                self.leftIntensity = publishedLeft
+                self.rightIntensity = publishedRight
                 self.normalizedXPosition = normalizedX
                 self.normalizedYPosition = normalizedY
             }
@@ -294,13 +314,24 @@ class MouseEdgeDetector: ObservableObject {
     private func fireDwellTrigger(edge: GazeEdge) {
         guard !requiresReturnToNeutral else { return }
 
+        let pose: HeadPose = edge == .top ? .tiltUp : .turnLeftRight
+
+        // In correction mode the disallowed pose is silently dropped, but the user still
+        // has to leave the edge before any further trigger fires.
+        if let allowed = correctionAllowedPose, pose != allowed {
+            appLog("[Mouse] correction-mode drop: \(pose) (only \(allowed) allowed)")
+            requiresReturnToNeutral = true
+            cancelDwellTimer()
+            dwellStartTime = nil
+            currentDwellEdge = .none
+            return
+        }
+
         let elapsed = dwellStartTime.map { Float(Date().timeIntervalSince($0)) } ?? dwellTime
         appLog("[Mouse] TRIGGERED: \(edge), dwell=\(elapsed)s")
 
         requiresReturnToNeutral = true
         cancelDwellTimer()
-
-        let pose: HeadPose = edge == .top ? .tiltUp : .turnLeftRight
 
         DispatchQueue.main.async {
             self.isAwaitingReturnToNeutral = true
@@ -317,6 +348,37 @@ class MouseEdgeDetector: ObservableObject {
 
         dwellStartTime = nil
         currentDwellEdge = .none
+    }
+
+    // MARK: - Correction Mode
+
+    func beginCorrectionMode(allowedPose: HeadPose) {
+        appLog("[Mouse] beginCorrectionMode allowed=\(allowedPose)")
+        correctionAllowedPose = allowedPose
+        hasRespondedThisWindow = false
+        requiresReturnToNeutral = false
+        cancelDwellTimer()
+        dwellStartTime = nil
+        currentDwellEdge = .none
+        DispatchQueue.main.async {
+            self.isAwaitingReturnToNeutral = false
+            self.dwellProgress = 0
+            switch allowedPose {
+            case .tiltUp:
+                self.leftIntensity = 0
+                self.rightIntensity = 0
+            case .turnLeftRight:
+                self.topIntensity = 0
+            case .neutral:
+                break
+            }
+        }
+    }
+
+    func endCorrectionMode() {
+        appLog("[Mouse] endCorrectionMode")
+        correctionAllowedPose = nil
+        hasRespondedThisWindow = true
     }
 
     private func processDwellLogic(detectedEdge: GazeEdge, isInNeutralZone: Bool, mouseLocation: CGPoint) {

@@ -245,9 +245,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
         }
 
-        // Reset after 3 seconds
+        // Keep the last-response icon visible for 30s so the user has time to notice
+        // a misregistration and correct it (via the menu-bar quick-edit panel after
+        // the 3s gesture-swap window passes).
         iconResetTimer?.invalidate()
-        iconResetTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
+        iconResetTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
             if let button = self?.statusItem.button {
                 button.image = NSImage(systemSymbolName: "bell.fill", accessibilityDescription: "Awareness Anchor")
             }
@@ -611,23 +613,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.smoothedRightIntensity = 0
 
             if isCalibrationMode {
-                // In calibration mode, add 3 second cooldown before allowing new highlights
-                // Set cooldown on AppDelegate (for glow updates) and both detectors (for triggers)
-                self.isInCooldown = true
-                self.appState.headPoseDetector.isInCooldown = true
-                self.appState.mouseEdgeDetector.isInCooldown = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                    guard let self = self else { return }
-                    self.isInCooldown = false
-                    self.appState.headPoseDetector.isInCooldown = false
-                    self.appState.mouseEdgeDetector.isInCooldown = false
+                // Skip the 3s "Initializing..." cooldown while a correction window is open —
+                // the user needs the opposite gesture to register immediately.
+                let inCorrection = self.appState.headPoseDetector.correctionAllowedPose != nil
+                                || self.appState.mouseEdgeDetector.correctionAllowedPose != nil
+                if inCorrection {
                     self.isWinkAnimating = false
-                    // Reset smoothed intensities again to ensure clean start
-                    self.smoothedTopIntensity = 0
-                    self.smoothedLeftIntensity = 0
-                    self.smoothedRightIntensity = 0
-                    // Don't reset baseline - keep original centerpoint for entire session
-                    // User must return to within frustum to trigger again (handled by requiresReturnToNeutral)
+                } else {
+                    // In calibration mode, add 3 second cooldown before allowing new highlights
+                    // Set cooldown on AppDelegate (for glow updates) and both detectors (for triggers)
+                    self.isInCooldown = true
+                    self.appState.headPoseDetector.isInCooldown = true
+                    self.appState.mouseEdgeDetector.isInCooldown = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                        guard let self = self else { return }
+                        self.isInCooldown = false
+                        self.appState.headPoseDetector.isInCooldown = false
+                        self.appState.mouseEdgeDetector.isInCooldown = false
+                        self.isWinkAnimating = false
+                        // Reset smoothed intensities again to ensure clean start
+                        self.smoothedTopIntensity = 0
+                        self.smoothedLeftIntensity = 0
+                        self.smoothedRightIntensity = 0
+                        // Don't reset baseline - keep original centerpoint for entire session
+                        // User must return to within frustum to trigger again (handled by requiresReturnToNeutral)
+                    }
                 }
             } else {
                 // In normal mode, no more highlights until next chime

@@ -12,6 +12,8 @@ class AppState: ObservableObject {
     @Published var currentSession: Session?
     @Published var isInResponseWindow = false
     @Published var responseWindowRemainingSeconds: Double = 0
+    @Published var isInCorrectionWindow = false
+    @Published var correctionWindowRemainingSeconds: Double = 0
     @Published var lastChimeTime: Date?
     @Published var todayStats: DayStats = DayStats()
     @Published var lastRecordedEvent: ChimeEvent?
@@ -39,6 +41,8 @@ class AppState: ObservableObject {
     // MARK: - Private State
     private var cancellables = Set<AnyCancellable>()
     private var responseWindowTimer: Timer?
+    private var correctionWindowTimer: Timer?
+    private let correctionWindowDuration: Double = 3.0
     private var pendingChimeId: UUID?
 
     struct DayStats {
@@ -83,7 +87,24 @@ class AppState: ObservableObject {
 
         // Unified input detection (head pose and/or mouse edge)
         inputCoordinator.onPoseDetected = { [weak self] pose in
-            guard let self = self, self.isInResponseWindow else { return }
+            guard let self = self else { return }
+
+            // Correction window: the opposite gesture swaps the just-recorded response.
+            // (HeadPoseDetector/MouseEdgeDetector already filter same-pose triggers, but
+            // we also gate here in case any callback slips through.)
+            if self.isInCorrectionWindow {
+                switch pose {
+                case .tiltUp:
+                    self.swapLastResponse(to: .present)
+                case .turnLeftRight:
+                    self.swapLastResponse(to: .returned)
+                case .neutral:
+                    break
+                }
+                return
+            }
+
+            guard self.isInResponseWindow else { return }
             switch pose {
             case .tiltUp:
                 self.recordResponse(.present)
@@ -126,7 +147,11 @@ class AppState: ObservableObject {
         isPlaying = false
         chimeScheduler.stop()
         inputCoordinator.stopDetection()
-        endResponseWindow(responded: false)
+        if isInCorrectionWindow {
+            endCorrectionWindow()
+        } else {
+            endResponseWindow(responded: false)
+        }
         endSession()
     }
 
@@ -140,8 +165,10 @@ class AppState: ObservableObject {
         // Pause chime timer (don't stop - session continues)
         chimeScheduler.pause()
 
-        // Stop tracking and end response window if active
-        if isInResponseWindow {
+        // Stop tracking and end response/correction window if active
+        if isInCorrectionWindow {
+            endCorrectionWindow()
+        } else if isInResponseWindow {
             endResponseWindow(responded: false)
         }
         inputCoordinator.deactivateWindow()
@@ -185,10 +212,18 @@ class AppState: ObservableObject {
         dataStore.saveChimeEvent(event)
         lastRecordedEvent = event
         updateTodayStats(with: type)
-        endResponseWindow(responded: true)
+
+        // Stop the response window countdown — a response has been recorded.
+        // Detector stays live; correction window opens to allow a hands-free swap.
+        responseWindowTimer?.invalidate()
+        responseWindowTimer = nil
+        isInResponseWindow = false
+        responseWindowRemainingSeconds = 0
 
         // Visual/audio feedback
         provideFeedback(for: type)
+
+        enterCorrectionWindow(after: type)
     }
 
     func updateInterval(_ seconds: Double) {
@@ -247,9 +282,9 @@ class AppState: ObservableObject {
     private let faceDetectionTimeout: TimeInterval = 3.0
 
     private func handleChime() {
-        // Block if already in response window or chime audio still playing
-        guard !isInResponseWindow, !audioPlayer.isChimePlaying else {
-            appLog("[AppState] Chime blocked - response window active: \(isInResponseWindow), audio playing: \(audioPlayer.isChimePlaying)", category: "AppState")
+        // Block if already in response/correction window or chime audio still playing
+        guard !isInResponseWindow, !isInCorrectionWindow, !audioPlayer.isChimePlaying else {
+            appLog("[AppState] Chime blocked - response window active: \(isInResponseWindow), correction window active: \(isInCorrectionWindow), audio playing: \(audioPlayer.isChimePlaying)", category: "AppState")
             return
         }
 
@@ -316,6 +351,62 @@ class AppState: ObservableObject {
         return inputCoordinator.topIntensity > threshold ||
                inputCoordinator.leftIntensity > threshold ||
                inputCoordinator.rightIntensity > threshold
+    }
+
+    // MARK: - Correction Window
+
+    /// After a response is recorded, keep the detector live for a few seconds.
+    /// Only the opposite gesture is accepted, and its trigger swaps the recorded response.
+    private func enterCorrectionWindow(after recorded: ResponseType) {
+        let opposite: HeadPose
+        switch recorded {
+        case .present:
+            opposite = .turnLeftRight
+        case .returned:
+            opposite = .tiltUp
+        case .missed:
+            // Missed responses don't pass through here, but keep the function total.
+            return
+        }
+
+        isInCorrectionWindow = true
+        correctionWindowRemainingSeconds = correctionWindowDuration
+        inputCoordinator.beginCorrectionMode(allowedPose: opposite)
+
+        correctionWindowTimer?.invalidate()
+        correctionWindowTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+
+            // Pause countdown while the user is mid-gesture, same as the main response window.
+            if self.isRegisteringFeedback {
+                return
+            }
+
+            self.correctionWindowRemainingSeconds -= 0.1
+            if self.correctionWindowRemainingSeconds <= 0 {
+                self.endCorrectionWindow()
+            }
+        }
+    }
+
+    private func endCorrectionWindow() {
+        correctionWindowTimer?.invalidate()
+        correctionWindowTimer = nil
+        isInCorrectionWindow = false
+        correctionWindowRemainingSeconds = 0
+        inputCoordinator.endCorrectionMode()
+        // Final teardown: stop detector/camera as if the response window had just closed.
+        endResponseWindow(responded: true)
+    }
+
+    private func swapLastResponse(to newType: ResponseType) {
+        appLog("[AppState] Correction swap to \(newType)", category: "AppState")
+        correctLastResponse(newType)
+        provideFeedback(for: newType)
+        endCorrectionWindow()
     }
 
     private func endResponseWindow(responded: Bool) {

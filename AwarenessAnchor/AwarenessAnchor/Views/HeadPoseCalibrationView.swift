@@ -13,6 +13,8 @@ struct HeadPoseCalibrationView: View {
     @State private var signedYawDelta: Float = 0
     @State private var triggeredPose: HeadPose? = nil
     @State private var showTriggeredFeedback = false
+    @State private var isInPreviewCorrection = false
+    @State private var correctionExpiryWorkItem: DispatchWorkItem?
 
     // Use coordinator's published state instead of detector
     private var isTestActive: Bool { appState.inputCoordinator.isCalibrationActive }
@@ -278,6 +280,7 @@ struct HeadPoseCalibrationView: View {
             }
         }
         .onDisappear {
+            endPreviewCorrection()
             if isTestActive {
                 appState.inputCoordinator.stopCalibration()
             }
@@ -294,6 +297,13 @@ struct HeadPoseCalibrationView: View {
     }
 
     private func handleCalibrationTrigger(pose: HeadPose, edge: GazeEdge) {
+        // A trigger during preview correction is the user swapping to the opposite gesture.
+        // Detector-side filtering already guarantees same-pose can't reach us here.
+        if isInPreviewCorrection {
+            handlePreviewCorrectionSwap(pose: pose, edge: edge)
+            return
+        }
+
         withAnimation(.spring(response: 0.3)) {
             triggeredPose = pose
             showTriggeredFeedback = true
@@ -307,13 +317,53 @@ struct HeadPoseCalibrationView: View {
         // Trigger screen glow for calibration feedback (pass edge for correct direction)
         AppDelegate.shared?.showCalibrationGlow(for: edge)
 
+        // Open a 3s correction window so the user can rehearse the swap gesture here too.
+        let opposite: HeadPose = pose == .tiltUp ? .turnLeftRight : .tiltUp
+        isInPreviewCorrection = true
+        appState.inputCoordinator.beginCorrectionMode(allowedPose: opposite)
+
+        correctionExpiryWorkItem?.cancel()
+        let work = DispatchWorkItem {
+            endPreviewCorrection()
+        }
+        correctionExpiryWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
+    }
+
+    private func handlePreviewCorrectionSwap(pose: HeadPose, edge: GazeEdge) {
+        // End correction immediately so the very next trigger starts a fresh cycle.
+        correctionExpiryWorkItem?.cancel()
+        correctionExpiryWorkItem = nil
+        isInPreviewCorrection = false
+        appState.inputCoordinator.endCorrectionMode()
+
+        withAnimation(.spring(response: 0.3)) {
+            triggeredPose = pose
+        }
+
+        if UserDefaults.standard.bool(forKey: "playSystemSoundOnTrigger") {
+            NSSound.beep()
+        }
+
+        AppDelegate.shared?.showCalibrationGlow(for: edge)
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             withAnimation {
                 showTriggeredFeedback = false
                 triggeredPose = nil
             }
-            // Don't reset baseline - keep it fixed for duration of test
-            // User can click Stop/Start to reset baseline
+        }
+    }
+
+    private func endPreviewCorrection() {
+        correctionExpiryWorkItem = nil
+        if isInPreviewCorrection {
+            isInPreviewCorrection = false
+            appState.inputCoordinator.endCorrectionMode()
+        }
+        withAnimation {
+            showTriggeredFeedback = false
+            triggeredPose = nil
         }
     }
 
@@ -342,6 +392,7 @@ struct HeadPoseCalibrationView: View {
             if detector.isRecordingEnabled {
                 _ = detector.stopRecording()
             }
+            endPreviewCorrection()
             appState.inputCoordinator.stopCalibration()
             deltaPitch = 0
             signedYawDelta = 0
