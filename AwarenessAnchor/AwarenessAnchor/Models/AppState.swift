@@ -223,7 +223,12 @@ class AppState: ObservableObject {
         // Visual/audio feedback
         provideFeedback(for: type)
 
-        enterCorrectionWindow(after: type)
+        let correctionEnabled = (UserDefaults.standard.object(forKey: "correctionWindowEnabled") as? Bool) ?? true
+        if correctionEnabled {
+            enterCorrectionWindow(after: type)
+        } else {
+            endResponseWindow(responded: true)
+        }
     }
 
     func updateInterval(_ seconds: Double) {

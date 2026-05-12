@@ -17,6 +17,12 @@ struct HeadPoseSceneView: NSViewRepresentable {
     let activeSource: String       // "headPose", "mouse", "none"
     let normalizedMouseX: Float    // 0 = left, 1 = right
     let normalizedMouseY: Float    // 0 = bottom, 1 = top
+    // Correction overlay: when non-nil, draw an expanded rectangle outside the
+    // simulated screen at correctionMultiplier × the frustum's far face. The
+    // pose names the axis allowed for the swap (solid lines on that axis,
+    // dashed on the others).
+    let correctionAllowedPose: HeadPose?
+    let correctionMultiplier: Float
 
     func makeNSView(context: Context) -> SCNView {
         let scnView = SCNView()
@@ -42,7 +48,9 @@ struct HeadPoseSceneView: NSViewRepresentable {
             rightIntensity: rightIntensity,
             activeSource: activeSource,
             normalizedMouseX: normalizedMouseX,
-            normalizedMouseY: normalizedMouseY
+            normalizedMouseY: normalizedMouseY,
+            correctionAllowedPose: correctionAllowedPose,
+            correctionMultiplier: correctionMultiplier
         )
     }
 
@@ -73,6 +81,7 @@ struct HeadPoseSceneView: NSViewRepresentable {
         private var cachedFarHeight: Float = 0.72
         private let frustumDepth: Float = 3.5
         private let frustumOffsetY: Float = 0.15  // Match gazeOriginY so neutral gaze hits frustum center
+        private var correctionOverlayNode: SCNNode?
 
         // Gaze vector origin (matches createGazeVector position)
         private let gazeOriginX: Float = 0
@@ -301,6 +310,87 @@ struct HeadPoseSceneView: NSViewRepresentable {
             frustumNode.addChildNode(lineNode)
         }
 
+        private func addLineSegment(from: SCNVector3, to: SCNVector3, color: NSColor, parent: SCNNode) {
+            let vertices: [SCNVector3] = [from, to]
+            let indices: [Int32] = [0, 1]
+            let vertexSource = SCNGeometrySource(vertices: vertices)
+            let element = SCNGeometryElement(indices: indices, primitiveType: .line)
+            let lineGeometry = SCNGeometry(sources: [vertexSource], elements: [element])
+            let material = SCNMaterial()
+            material.diffuse.contents = color
+            material.emission.contents = color
+            lineGeometry.materials = [material]
+            parent.addChildNode(SCNNode(geometry: lineGeometry))
+        }
+
+        private func addDashedLine(from start: SCNVector3, to end: SCNVector3, color: NSColor, parent: SCNNode, dashCount: Int = 18) {
+            for i in 0..<dashCount {
+                let t0 = CGFloat(i) / CGFloat(dashCount)
+                let t1 = t0 + 0.5 / CGFloat(dashCount)
+                let p0 = SCNVector3(
+                    start.x + (end.x - start.x) * t0,
+                    start.y + (end.y - start.y) * t0,
+                    start.z + (end.z - start.z) * t0
+                )
+                let p1 = SCNVector3(
+                    start.x + (end.x - start.x) * t1,
+                    start.y + (end.y - start.y) * t1,
+                    start.z + (end.z - start.z) * t1
+                )
+                addLineSegment(from: p0, to: p1, color: color, parent: parent)
+            }
+        }
+
+        private func updateCorrectionOverlay(allowedPose: HeadPose?, multiplier: Float) {
+            correctionOverlayNode?.removeFromParentNode()
+            correctionOverlayNode = nil
+
+            guard let allowedPose = allowedPose, multiplier > 1.0 else { return }
+
+            let expandedW = cachedFarWidth * multiplier
+            let expandedH = cachedFarHeight * multiplier
+            let z = -frustumDepth
+
+            let bl = SCNVector3(CGFloat(-expandedW), CGFloat(-expandedH), CGFloat(z))
+            let br = SCNVector3(CGFloat(expandedW),  CGFloat(-expandedH), CGFloat(z))
+            let tr = SCNVector3(CGFloat(expandedW),  CGFloat(expandedH),  CGFloat(z))
+            let tl = SCNVector3(CGFloat(-expandedW), CGFloat(expandedH),  CGFloat(z))
+
+            let solidColor = NSColor(calibratedRed: 1.0, green: 0.75, blue: 0.25, alpha: 0.95)
+            let dashedColor = NSColor(calibratedRed: 1.0, green: 0.75, blue: 0.25, alpha: 0.55)
+
+            // Allowed-axis edges get solid lines; the rest stay dashed so the user
+            // can see the boundary but knows which direction will register a swap.
+            let topSolid = (allowedPose == .tiltUp)
+            let sidesSolid = (allowedPose == .turnLeftRight)
+
+            let node = SCNNode()
+
+            // Top edge
+            if topSolid {
+                addLineSegment(from: tl, to: tr, color: solidColor, parent: node)
+            } else {
+                addDashedLine(from: tl, to: tr, color: dashedColor, parent: node)
+            }
+            // Bottom edge — never a correction direction, always dashed for context
+            addDashedLine(from: bl, to: br, color: dashedColor, parent: node)
+            // Left edge
+            if sidesSolid {
+                addLineSegment(from: bl, to: tl, color: solidColor, parent: node)
+            } else {
+                addDashedLine(from: bl, to: tl, color: dashedColor, parent: node)
+            }
+            // Right edge
+            if sidesSolid {
+                addLineSegment(from: br, to: tr, color: solidColor, parent: node)
+            } else {
+                addDashedLine(from: br, to: tr, color: dashedColor, parent: node)
+            }
+
+            frustumNode.addChildNode(node)
+            correctionOverlayNode = node
+        }
+
         private func createReticle() {
             // Ring reticle on the far face projection plane
             let ring = SCNTorus(ringRadius: 0.1, pipeRadius: 0.012)
@@ -384,9 +474,11 @@ struct HeadPoseSceneView: NSViewRepresentable {
                          dwellProgress: Float, isTestActive: Bool, faceDetected: Bool,
                          isInCooldown: Bool,
                          topIntensity: Float, leftIntensity: Float, rightIntensity: Float,
-                         activeSource: String, normalizedMouseX: Float, normalizedMouseY: Float) {
+                         activeSource: String, normalizedMouseX: Float, normalizedMouseY: Float,
+                         correctionAllowedPose: HeadPose?, correctionMultiplier: Float) {
 
             rebuildFrustum(pitchThreshold: pitchThreshold, yawThreshold: yawThreshold)
+            updateCorrectionOverlay(allowedPose: correctionAllowedPose, multiplier: correctionMultiplier)
 
             // Update frustum face opacities based on intensities
             let sideColor: (r: CGFloat, g: CGFloat, b: CGFloat) = (0.8, 0.5, 0.1)
@@ -568,7 +660,9 @@ struct HeadPoseSceneView: NSViewRepresentable {
         rightIntensity: 0.7,
         activeSource: "headPose",
         normalizedMouseX: 0.5,
-        normalizedMouseY: 0.5
+        normalizedMouseY: 0.5,
+        correctionAllowedPose: nil,
+        correctionMultiplier: 1.25
     )
     .frame(width: 300, height: 300)
 }

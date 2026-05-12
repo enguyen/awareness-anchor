@@ -76,6 +76,9 @@ struct HeadPoseEngine {
     private var currentDwellPose: HeadPose = .neutral
     private(set) var requiresReturnToNeutral: Bool = false
     var isInCooldown: Bool = false
+    // Applied uniformly to both pitch and yaw thresholds. Set to >1.0 during a
+    // correction window to require a larger head movement for the swap gesture.
+    var correctionThresholdMultiplier: Float = 1.0
     private var previousPitchDelta: Float?
     private var previousSignedYawDelta: Float?
 
@@ -271,16 +274,18 @@ struct HeadPoseEngine {
     // MARK: - Threshold resolution
 
     func effectiveThresholds(boundingBoxWidth: Float) -> (pitch: Float, yaw: Float) {
+        let base: (pitch: Float, yaw: Float)
         switch config.thresholdMode {
         case .manual(let pitch, let yaw):
-            return (pitch, yaw)
+            base = (pitch, yaw)
         case .auto(let screenW, let screenH, let hfov, let mult):
             let distance = DisplayGeometry.estimateFaceDistance(boundingBoxWidth: boundingBoxWidth, cameraHFOVDegrees: hfov)
             guard distance > 0 else { return (0, 0) }
             let rawPitch = DisplayGeometry.computePitchThreshold(screenHeightMeters: screenH, faceDistanceMeters: distance)
             let rawYaw = DisplayGeometry.computeYawThreshold(screenWidthMeters: screenW, faceDistanceMeters: distance)
-            return (rawPitch * mult, rawYaw * mult)
+            base = (rawPitch * mult, rawYaw * mult)
         }
+        return (base.pitch * correctionThresholdMultiplier, base.yaw * correctionThresholdMultiplier)
     }
 
     private mutating func computeAutoThresholds(boundingBoxWidth bbW: Float) -> [EngineEvent] {
@@ -654,8 +659,10 @@ class HeadPoseDetector: NSObject, ObservableObject {
     /// Re-open detection for a swap. Clears the "already responded" gate so the engine
     /// can fire a second trigger, but only the allowed pose will be reported through.
     func beginCorrectionMode(allowedPose: HeadPose) {
-        appLog("[HP] beginCorrectionMode allowed=\(allowedPose)")
+        let multiplier = HeadPoseDetector.configuredCorrectionMultiplier()
+        appLog("[HP] beginCorrectionMode allowed=\(allowedPose) multiplier=\(multiplier)")
         correctionAllowedPose = allowedPose
+        engine.correctionThresholdMultiplier = multiplier
         hasRespondedThisWindow = false
         DispatchQueue.main.async {
             self.isAwaitingReturnToNeutral = false
@@ -675,7 +682,15 @@ class HeadPoseDetector: NSObject, ObservableObject {
     func endCorrectionMode() {
         appLog("[HP] endCorrectionMode")
         correctionAllowedPose = nil
+        engine.correctionThresholdMultiplier = 1.0
         hasRespondedThisWindow = true
+    }
+
+    /// Read the user-configured correction threshold multiplier. Defaults to 1.25
+    /// when the setting has never been written.
+    static func configuredCorrectionMultiplier() -> Float {
+        let stored = UserDefaults.standard.object(forKey: "correctionThresholdMultiplier") as? Double
+        return Float(stored ?? 1.25)
     }
 
     // MARK: - Calibration Mode

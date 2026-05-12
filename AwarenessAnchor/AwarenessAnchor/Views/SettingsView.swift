@@ -88,6 +88,7 @@ struct GeneralSettingsView: View {
     @AppStorage("playSystemSoundOnTrigger") private var playSystemSoundOnTrigger = false
     @AppStorage("screenGlowEnabled") private var screenGlowEnabled = true
     @AppStorage("screenGlowOpacity") private var screenGlowOpacity = 0.5
+    @AppStorage("correctionWindowEnabled") private var correctionWindowEnabled = true
 
     var body: some View {
         ScrollView {
@@ -110,6 +111,11 @@ struct GeneralSettingsView: View {
                             .toggleStyle(.switch)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
+                    Toggle("Allow opposite-gesture correction (3s after each response)",
+                           isOn: $correctionWindowEnabled)
+                        .toggleStyle(.switch)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                     // Unified gesture explanation (shown when either is enabled)
                     if mouseTrackingEnabled || headPoseEnabled {

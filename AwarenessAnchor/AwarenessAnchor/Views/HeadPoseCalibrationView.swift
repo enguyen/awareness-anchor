@@ -16,6 +16,13 @@ struct HeadPoseCalibrationView: View {
     @State private var isInPreviewCorrection = false
     @State private var correctionExpiryWorkItem: DispatchWorkItem?
 
+    /// While the preview is showing the post-response correction window, this is the
+    /// pose the user must perform to register a swap (opposite of the just-triggered pose).
+    private var previewCorrectionAllowedPose: HeadPose? {
+        guard isInPreviewCorrection, let pose = triggeredPose else { return nil }
+        return pose == .tiltUp ? .turnLeftRight : .tiltUp
+    }
+
     // Use coordinator's published state instead of detector
     private var isTestActive: Bool { appState.inputCoordinator.isCalibrationActive }
 
@@ -25,6 +32,8 @@ struct HeadPoseCalibrationView: View {
     @State private var smoothingFactor: Float = 0.5
     @State private var dwellTime: Float = 0.2
     @State private var sensitivityMultiplier: Float = 1.3
+    @AppStorage("correctionThresholdMultiplier") private var correctionMultiplierStored: Double = 1.25
+    @AppStorage("correctionWindowEnabled") private var correctionWindowEnabled: Bool = true
     @State private var calibrationChimePlayer: AVAudioPlayer?
     @State private var recordingSavedMessage: String?
 
@@ -53,7 +62,9 @@ struct HeadPoseCalibrationView: View {
                                 rightIntensity: appState.inputCoordinator.rightIntensity,
                                 activeSource: appState.inputCoordinator.activeSource.rawValue,
                                 normalizedMouseX: appState.mouseEdgeDetector.normalizedXPosition,
-                                normalizedMouseY: appState.mouseEdgeDetector.normalizedYPosition
+                                normalizedMouseY: appState.mouseEdgeDetector.normalizedYPosition,
+                                correctionAllowedPose: previewCorrectionAllowedPose,
+                                correctionMultiplier: Float(correctionMultiplierStored)
                             )
                             .frame(maxWidth: .infinity)
                             .frame(height: 280)
@@ -249,6 +260,29 @@ struct HeadPoseCalibrationView: View {
                             )
                             .opacity(detector.isAutoThresholdActive ? 0.4 : 1.0)
                             .disabled(detector.isAutoThresholdActive)
+                        }
+                    }
+
+                    // Correction Window
+                    if headPoseEnabled && correctionWindowEnabled {
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Correction Window")
+                                .font(.headline)
+
+                            ThresholdSlider(
+                                icon: "arrow.up.left.and.arrow.down.right",
+                                color: .pink,
+                                label: "Correction expansion",
+                                value: Binding(
+                                    get: { Float(correctionMultiplierStored) },
+                                    set: { correctionMultiplierStored = Double($0) }
+                                ),
+                                range: 1.0...2.0,
+                                hint: "Multiplier on threshold during the 3s swap window — higher = bigger head turn needed to correct",
+                                onChanged: { _ in }
+                            )
                         }
                     }
                 }
